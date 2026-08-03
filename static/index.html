@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Claudio</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f2f2f7;
+    --card: #ffffff;
+    --text: #1c1c1e;
+    --muted: #6e6e73;
+    --accent: #007aff;
+    --danger: #ff3b30;
+    --border: #e5e5ea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000000;
+      --card: #1c1c1e;
+      --text: #f2f2f7;
+      --muted: #98989f;
+      --border: #2c2c2e;
+    }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  body {
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    padding-bottom: calc(env(safe-area-inset-bottom) + 24px);
+  }
+  header {
+    padding: 20px 16px 8px;
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 5;
+  }
+  h1 { font-size: 28px; margin: 0; }
+  .subtitle { color: var(--muted); font-size: 14px; margin-top: 2px; }
+  main { padding: 8px 16px 40px; max-width: 640px; margin: 0 auto; }
+  section { margin-top: 24px; }
+  h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    margin: 0 0 8px 4px;
+  }
+  .card-list { display: flex; flex-direction: column; gap: 10px; }
+  .session-card {
+    background: var(--card);
+    border-radius: 14px;
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    border: 1px solid var(--border);
+  }
+  .session-info { min-width: 0; flex: 1; }
+  .session-name { font-weight: 600; font-size: 17px; }
+  .session-cwd {
+    color: var(--muted);
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .session-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .badge.busy, .badge.working { background: #fff3cd; color: #8a6100; }
+  .badge.idle, .badge.done { background: #d4f4dd; color: #14702e; }
+  @media (prefers-color-scheme: dark) {
+    .badge.busy, .badge.working { background: #4a3b00; color: #ffd54a; }
+    .badge.idle, .badge.done { background: #0e3d1d; color: #5fe38a; }
+  }
+  .kill-btn {
+    background: var(--danger);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 15px;
+    font-weight: 600;
+    flex-shrink: 0;
+  }
+  .kill-btn:active { opacity: 0.7; }
+  .empty {
+    color: var(--muted);
+    text-align: center;
+    padding: 24px 0;
+    font-size: 15px;
+  }
+  .card {
+    background: var(--card);
+    border-radius: 14px;
+    padding: 16px;
+    border: 1px solid var(--border);
+  }
+  .chip-group { margin-bottom: 12px; }
+  .chip-group-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 8px 14px;
+    font-size: 14px;
+    color: var(--text);
+  }
+  .chip.selected { background: var(--accent); color: white; border-color: var(--accent); }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 6px; }
+  input[type=text] {
+    width: 100%;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 16px;
+  }
+  .spawn-btn {
+    width: 100%;
+    margin-top: 16px;
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 12px;
+    padding: 14px;
+    font-size: 17px;
+    font-weight: 600;
+  }
+  .spawn-btn:disabled { opacity: 0.5; }
+  .spawn-btn:active { opacity: 0.7; }
+  .toast {
+    position: fixed;
+    bottom: calc(env(safe-area-inset-bottom) + 16px);
+    left: 16px;
+    right: 16px;
+    background: var(--text);
+    color: var(--bg);
+    padding: 12px 16px;
+    border-radius: 12px;
+    font-size: 14px;
+    text-align: center;
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity 0.2s, transform 0.2s;
+    pointer-events: none;
+    z-index: 20;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Claudio</h1>
+  <div class="subtitle">Claude Code sessions on this machine</div>
+</header>
+<main>
+  <section>
+    <h2>Running</h2>
+    <div id="sessions" class="card-list">
+      <div class="empty">Loading…</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>New session</h2>
+    <div class="card">
+      <div id="folder-groups"></div>
+      <label for="cwd">Folder</label>
+      <input id="cwd" type="text" placeholder="/home/you/git/some-project" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <label for="name">Name</label>
+      <input id="name" type="text" placeholder="session name" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <button id="spawn-btn" class="spawn-btn">Spawn Session</button>
+    </div>
+  </section>
+</main>
+<div id="toast" class="toast"></div>
+
+<script>
+const sessionsEl = document.getElementById('sessions');
+const foldersEl = document.getElementById('folder-groups');
+const cwdInput = document.getElementById('cwd');
+const nameInput = document.getElementById('name');
+const spawnBtn = document.getElementById('spawn-btn');
+const toastEl = document.getElementById('toast');
+
+let toastTimer = null;
+function toast(msg) {
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2200);
+}
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function basename(p) {
+  const parts = p.split('/').filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : p;
+}
+
+async function refreshSessions() {
+  try {
+    const res = await fetch('/api/sessions');
+    if (!res.ok) throw new Error('failed to load sessions');
+    const sessions = await res.json();
+    renderSessions(sessions || []);
+  } catch (e) {
+    sessionsEl.textContent = '';
+    sessionsEl.appendChild(el('div', 'empty', "Couldn't reach claudio: " + e.message));
+  }
+}
+
+// Builds each session card via DOM APIs (textContent, not innerHTML) so
+// nothing from `claude agents --json` (names, paths) can be interpreted as
+// markup, even though these values only ever come from the local machine.
+function renderSessions(sessions) {
+  sessionsEl.textContent = '';
+  if (!sessions.length) {
+    sessionsEl.appendChild(el('div', 'empty', 'No sessions running'));
+    return;
+  }
+  for (const s of sessions) {
+    const state = (s.state || s.status || '').toLowerCase();
+    const displayName = s.name || s.id || 'unnamed';
+
+    const card = el('div', 'session-card');
+
+    const info = el('div', 'session-info');
+    info.appendChild(el('div', 'session-name', displayName));
+    info.appendChild(el('div', 'session-cwd', s.cwd || ''));
+
+    const meta = el('div', 'session-meta');
+    meta.appendChild(el('span', 'badge ' + state, s.status || s.state || 'unknown'));
+    meta.appendChild(el('span', null, s.id || ''));
+    info.appendChild(meta);
+
+    card.appendChild(info);
+
+    const killBtn = el('button', 'kill-btn', 'Kill');
+    killBtn.addEventListener('click', () => onKill(killBtn, s.id, displayName));
+    card.appendChild(killBtn);
+
+    sessionsEl.appendChild(card);
+  }
+}
+
+async function onKill(btn, id, name) {
+  if (!confirm(`Delete session "${name}"?`)) return;
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/sessions/${id}`, { method: 'DELETE' });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || 'failed to delete');
+    toast(`Deleted ${name}`);
+    refreshSessions();
+  } catch (err) {
+    toast(err.message);
+    btn.disabled = false;
+  }
+}
+
+async function loadFolders() {
+  try {
+    const res = await fetch('/api/folders');
+    if (!res.ok) return;
+    const groups = await res.json();
+    foldersEl.textContent = '';
+    for (const g of (groups || [])) {
+      if (!g.dirs || !g.dirs.length) continue;
+      const wrap = el('div', 'chip-group');
+      wrap.appendChild(el('div', 'chip-group-label', g.root));
+      const chips = el('div', 'chips');
+      for (const d of g.dirs) {
+        const chip = el('button', 'chip', d);
+        chip.type = 'button';
+        chip.addEventListener('click', () => {
+          foldersEl.querySelectorAll('.chip.selected').forEach(c => c.classList.remove('selected'));
+          chip.classList.add('selected');
+          const path = g.root.replace(/\/$/, '') + '/' + d;
+          cwdInput.value = path;
+          if (!nameInput.value) nameInput.value = d;
+        });
+        chips.appendChild(chip);
+      }
+      wrap.appendChild(chips);
+      foldersEl.appendChild(wrap);
+    }
+  } catch (e) {
+    // folder picker is a convenience; failing silently is fine, free-text still works
+  }
+}
+
+cwdInput.addEventListener('input', () => {
+  if (!nameInput.value && cwdInput.value) {
+    nameInput.value = basename(cwdInput.value);
+  }
+});
+
+spawnBtn.addEventListener('click', async () => {
+  const cwd = cwdInput.value.trim();
+  const name = nameInput.value.trim() || basename(cwd);
+  if (!cwd) { toast('Pick or type a folder first'); return; }
+  spawnBtn.disabled = true;
+  spawnBtn.textContent = 'Spawning…';
+  try {
+    const res = await fetch('/api/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cwd, name }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || 'failed to spawn');
+    toast(`Launching "${name}"…`);
+    cwdInput.value = '';
+    nameInput.value = '';
+    foldersEl.querySelectorAll('.chip.selected').forEach(c => c.classList.remove('selected'));
+    setTimeout(refreshSessions, 1500);
+  } catch (err) {
+    toast(err.message);
+  } finally {
+    spawnBtn.disabled = false;
+    spawnBtn.textContent = 'Spawn Session';
+  }
+});
+
+loadFolders();
+refreshSessions();
+setInterval(refreshSessions, 4000);
+</script>
+</body>
+</html>
