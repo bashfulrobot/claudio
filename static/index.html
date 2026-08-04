@@ -127,6 +127,8 @@
     color: var(--text);
   }
   .chip.selected { background: var(--accent); color: white; border-color: var(--accent); }
+  .chip-root { color: var(--muted); font-size: 12px; margin-left: 6px; }
+  .chip.selected .chip-root { color: rgba(255, 255, 255, 0.8); }
   .picker { position: relative; }
   .fuzzy-dropdown {
     display: none;
@@ -348,9 +350,19 @@ function fuzzyScore(query, target) {
 function renderFavoritesRow() {
   favoritesRowEl.textContent = '';
   const favEntries = allEntries.filter(e => favorites.has(e.path));
+  // Same dir name can exist under more than one root (e.g. ~/git/foo and
+  // ~/dev/foo) — count occurrences so we only add a root label when it's
+  // actually needed to tell two favorited chips apart.
+  const dirCounts = {};
+  for (const entry of favEntries) {
+    dirCounts[entry.dir] = (dirCounts[entry.dir] || 0) + 1;
+  }
   for (const entry of favEntries) {
     const chip = el('button', 'chip', entry.dir);
     chip.type = 'button';
+    if (dirCounts[entry.dir] > 1) {
+      chip.appendChild(el('span', 'chip-root', entry.root));
+    }
     chip.addEventListener('click', () => selectEntry(entry, chip));
     favoritesRowEl.appendChild(chip);
   }
@@ -399,7 +411,7 @@ function renderDropdown(query) {
       // preventDefault on mousedown cancels the browser's default
       // "move focus to target" action for THIS interaction, so #cwd never
       // blurs in the first place when a star/row is tapped directly — no
-      // race with Task 6's blur handler for this path. touchstart needs
+      // race with the blur handler below for this path. touchstart needs
       // its own preventDefault: on iOS Safari a touchstart can blur the
       // focused input before the synthesized mousedown fires, so relying
       // on mousedown alone silently drops taps on that browser.
