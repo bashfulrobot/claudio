@@ -399,7 +399,34 @@ renderFavoritesRow();
 
 Expected: one chip appears in the favorites row (above the "Folder" label) showing `allEntries[0].dir`. Click it — expected: `#cwd` fills with the full path and `#name` fills with the dir name (both visible in the form fields). Note: clicking will throw in the console because `closeDropdown` isn't defined until Task 5 — confirm the *fields still filled correctly* despite the console error (the assignments happen before the throwing line), then run `favorites.delete(allEntries[0].path); renderFavoritesRow();` to reset state before moving on.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Wire up favorites initialization at script startup**
+
+`favorites` was declared as an empty `Set` in Task 3 and is never populated from `localStorage` anywhere in the plan as originally written — this is a plan defect caught during Task 3's code quality review: without this step, every page reload silently discards persisted favorites, contradicting the design doc's "star/unstar round-trips through a reload" requirement.
+
+Find the init calls at the very bottom of the `<script>` block (unchanged since before this plan):
+
+```js
+loadFolders();
+refreshSessions();
+setInterval(refreshSessions, 4000);
+```
+
+Replace with:
+
+```js
+favorites = loadFavorites();
+loadFolders();
+refreshSessions();
+setInterval(refreshSessions, 4000);
+```
+
+`favorites` must be assigned before `loadFolders()` runs, since `loadFolders()` calls `renderFavoritesRow()`, which reads `favorites` to decide which entries to render as chips.
+
+- [ ] **Step 5: Manually verify favorites persist**
+
+Trace through: `favorites = loadFavorites()` reads `localStorage`, `loadFolders()` fetches `/api/folders`, sets `allEntries`, and calls `renderFavoritesRow()`, which now sees a populated (not empty) `favorites` set on first render. Confirm by reading the script top-to-bottom that no code path between `favorites = loadFavorites();` and the first `renderFavoritesRow()` call reassigns `favorites` back to an empty `Set`.
+
+- [ ] **Step 6: Commit**
 
 ```bash
 git add static/index.html
