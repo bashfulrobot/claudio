@@ -207,6 +207,12 @@ const nameInput = document.getElementById('name');
 const spawnBtn = document.getElementById('spawn-btn');
 const toastEl = document.getElementById('toast');
 
+// The page may be served at "/" directly or behind a reverse-proxy path
+// prefix (e.g. tailscale serve --set-path=/claudio strips the prefix before
+// forwarding to this app, so the browser must keep it on every fetch).
+// Derived from the page's own URL so no server-side config is needed.
+const API_BASE = location.pathname.replace(/\/$/, '');
+
 let toastTimer = null;
 function toast(msg) {
   toastEl.textContent = msg;
@@ -229,7 +235,7 @@ function basename(p) {
 
 async function refreshSessions() {
   try {
-    const res = await fetch('/api/sessions');
+    const res = await fetch(`${API_BASE}/api/sessions`);
     if (!res.ok) throw new Error('failed to load sessions');
     const sessions = await res.json();
     renderSessions(sessions || []);
@@ -277,7 +283,7 @@ async function onKill(btn, id, name) {
   if (!confirm(`Delete session "${name}"?`)) return;
   btn.disabled = true;
   try {
-    const res = await fetch(`/api/sessions/${id}`, { method: 'DELETE' });
+    const res = await fetch(`${API_BASE}/api/sessions/${id}`, { method: 'DELETE' });
     const body = await res.json();
     if (!res.ok) throw new Error(body.error || 'failed to delete');
     toast(`Deleted ${name}`);
@@ -290,7 +296,7 @@ async function onKill(btn, id, name) {
 
 async function loadFolders() {
   try {
-    const res = await fetch('/api/folders');
+    const res = await fetch(`${API_BASE}/api/folders`);
     if (!res.ok) return;
     const groups = await res.json();
     foldersEl.textContent = '';
@@ -332,7 +338,7 @@ spawnBtn.addEventListener('click', async () => {
   spawnBtn.disabled = true;
   spawnBtn.textContent = 'Spawning…';
   try {
-    const res = await fetch('/api/sessions', {
+    const res = await fetch(`${API_BASE}/api/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cwd, name }),
