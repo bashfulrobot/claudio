@@ -12,6 +12,7 @@ import (
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8787", "listen address (bind to your Tailscale IP to expose over the tailnet)")
 	claudeBin := flag.String("claude-bin", "claude", "path to the claude CLI binary")
+	gitBin := flag.String("git-bin", "git", "path to the git binary, used to decide whether a new session can be worktree-isolated")
 	rootsFlag := flag.String("roots", defaultRoots(), "comma-separated project root directories to offer in the folder picker")
 	flag.Parse()
 
@@ -23,7 +24,7 @@ func main() {
 		}
 	}
 
-	srv := NewServer(*claudeBin, roots)
+	srv := NewServer(*claudeBin, *gitBin, roots)
 
 	log.Printf("claudio listening on %s (roots: %v)", *addr, roots)
 	if err := http.ListenAndServe(*addr, srv); err != nil {

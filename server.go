@@ -14,12 +14,13 @@ var staticFS embed.FS
 
 type Server struct {
 	claudeBin string
+	gitBin    string
 	roots     []string
 	mux       *http.ServeMux
 }
 
-func NewServer(claudeBin string, roots []string) *Server {
-	s := &Server{claudeBin: claudeBin, roots: roots, mux: http.NewServeMux()}
+func NewServer(claudeBin, gitBin string, roots []string) *Server {
+	s := &Server{claudeBin: claudeBin, gitBin: gitBin, roots: roots, mux: http.NewServeMux()}
 	s.routes()
 	return s
 }
@@ -51,7 +52,7 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 }
 
 // GET  /api/sessions  -> list
-// POST /api/sessions  -> spawn {cwd, name}
+// POST /api/sessions  -> spawn (see SpawnOptions in sessions.go for the full body)
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -63,9 +64,18 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, sessions)
 
 	case http.MethodPost:
+		// Model/Effort/PermissionMode/Prompt/Worktree are all optional --
+		// see SpawnOptions in sessions.go for why a blank value is omitted
+		// from the claude invocation entirely rather than sent as some
+		// "default", and why Worktree is a pointer.
 		var body struct {
-			Cwd  string `json:"cwd"`
-			Name string `json:"name"`
+			Cwd            string `json:"cwd"`
+			Name           string `json:"name"`
+			Model          string `json:"model"`
+			Effort         string `json:"effort"`
+			PermissionMode string `json:"permissionMode"`
+			Prompt         string `json:"prompt"`
+			Worktree       *bool  `json:"worktree"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request body")
@@ -75,34 +85,72 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "cwd is required")
 			return
 		}
-		if err := spawnSession(s.claudeBin, body.Cwd, body.Name); err != nil {
+		opts := SpawnOptions{
+			Model:          body.Model,
+			Effort:         body.Effort,
+			PermissionMode: body.PermissionMode,
+			Prompt:         body.Prompt,
+			Worktree:       body.Worktree,
+		}
+		result, err := spawnSession(s.claudeBin, s.gitBin, body.Cwd, body.Name, opts)
+		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusAccepted, map[string]string{"status": "launching"})
+		writeJSON(w, http.StatusAccepted, result)
 
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
-// DELETE /api/sessions/{id} — id is the short `id` field from
-// `claude agents --json`, e.g. "5aad2c1c", not a pid.
+// handleSessionByID serves two routes under one prefix registration:
+//
+//	DELETE /api/sessions/{id}       permanently remove (id is the short "id"
+//	                                field from `claude agents --json`, e.g.
+//	                                "5aad2c1c" -- not a pid)
+//	POST   /api/sessions/{id}/stop  stop but keep the conversation, resumable
+//	                                later via `claude attach <id>`
+//
+// Both share one "/api/sessions/" prefix handler (see routes()) rather than
+// Go 1.22 method-scoped patterns: the catch-all file server mounted at "/"
+// means a method-scoped "GET /api/sessions/{id}" would let an unmatched GET
+// fall through to it and return an HTML 200 instead of a JSON 405/404, which
+// is worse than the manual path-splitting below.
 func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodDelete {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	id := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
-	if id == "" {
+	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/sessions/"), "/")
+	if rest == "" {
 		writeError(w, http.StatusBadRequest, "session id is required")
 		return
 	}
-	if err := killSession(s.claudeBin, id); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
+	parts := strings.Split(rest, "/")
+
+	switch {
+	case len(parts) == 1:
+		if r.Method != http.MethodDelete {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if err := killSession(s.claudeBin, parts[0]); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
+
+	case len(parts) == 2 && parts[1] == "stop":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if err := stopSession(s.claudeBin, parts[0]); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "stopped"})
+
+	default:
+		writeError(w, http.StatusNotFound, "not found")
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
 }
 
 // GET /api/folders

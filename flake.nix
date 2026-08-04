@@ -105,6 +105,15 @@
               default = "claude";
               description = "Path to (or name of) the claude CLI binary.";
             };
+
+            gitBinary = lib.mkOption {
+              type = lib.types.str;
+              default = "git";
+              description = ''
+                Path to (or name of) the git binary, used to decide whether a
+                newly spawned session can be isolated into a git worktree.
+              '';
+            };
           };
 
           config = lib.mkIf cfg.enable {
@@ -113,11 +122,18 @@
               wantedBy = [ "multi-user.target" ];
               after = [ "network-online.target" ];
               wants = [ "network-online.target" ];
+              # The default systemd unit PATH covers coreutils and friends
+              # but NOT git -- without this, worktree-by-default silently
+              # degrades to never-worktree under the module while working
+              # fine in a dev shell, since exec.Command("git", ...) just
+              # fails to find the binary.
+              path = [ pkgs.git ];
               serviceConfig = {
                 ExecStart =
                   "${cfg.package}/bin/claudio"
                   + " -addr ${cfg.listenAddr}"
                   + " -claude-bin ${cfg.claudeBinary}"
+                  + " -git-bin ${cfg.gitBinary}"
                   + lib.optionalString (cfg.roots != [ ]) " -roots ${lib.concatStringsSep "," cfg.roots}";
                 User = cfg.user;
                 Restart = "on-failure";
