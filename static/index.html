@@ -541,7 +541,19 @@ cwdInput.addEventListener('input', () => {
   renderDropdown(cwdInput.value.trim());
 });
 
-cwdInput.addEventListener('focus', openDropdown);
+let blurTimer = null;
+
+cwdInput.addEventListener('focus', () => {
+  // Cancel a pending close from a just-prior blur — otherwise a rapid
+  // blur-then-refocus (e.g. a mis-tap) leaves a stale timer that tears
+  // the dropdown down ~150ms later even though the user is now actively
+  // focused on and interacting with the field again.
+  if (blurTimer) {
+    clearTimeout(blurTimer);
+    blurTimer = null;
+  }
+  openDropdown();
+});
 
 cwdInput.addEventListener('blur', () => {
   // Row/star taps call preventDefault() in their own mousedown/touchstart
@@ -550,8 +562,12 @@ cwdInput.addEventListener('blur', () => {
   // no race to win there. This delay exists for the OTHER ways #cwd can
   // blur (tapping elsewhere on the page, Tab-based focus change), so a
   // stray blur doesn't tear the dropdown down before a same-tick related
-  // interaction finishes.
-  setTimeout(closeDropdown, 150);
+  // interaction finishes. The `focus` listener above cancels this timer
+  // if the user refocuses before it fires.
+  blurTimer = setTimeout(() => {
+    closeDropdown();
+    blurTimer = null;
+  }, 150);
 });
 
 spawnBtn.addEventListener('click', async () => {
