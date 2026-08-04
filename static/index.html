@@ -364,6 +364,67 @@ function selectEntry(entry, chipEl) {
   closeDropdown();
 }
 
+function computeResults(query) {
+  if (!query) {
+    const favs = allEntries.filter(e => favorites.has(e.path));
+    const rest = allEntries
+      .filter(e => !favorites.has(e.path))
+      .slice()
+      .sort((a, b) => a.dir.localeCompare(b.dir));
+    return favs.concat(rest).slice(0, 10);
+  }
+  const scored = [];
+  for (const entry of allEntries) {
+    const score = fuzzyScore(query, entry.dir);
+    if (score !== null) scored.push({ entry, score });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, 10).map(s => s.entry);
+}
+
+function renderDropdown(query) {
+  currentResults = computeResults(query);
+  highlightedIndex = -1;
+  fuzzyDropdownEl.textContent = '';
+  for (const entry of currentResults) {
+    const row = el('div', 'fuzzy-row');
+
+    const name = el('span', 'fuzzy-name', entry.dir);
+    name.appendChild(el('span', 'fuzzy-root', entry.root));
+
+    const isFav = favorites.has(entry.path);
+    const star = el('button', 'fuzzy-star' + (isFav ? ' active' : ''), isFav ? '★' : '☆');
+    star.type = 'button';
+    star.addEventListener('mousedown', (e) => {
+      e.preventDefault(); // don't let the input blur before the click registers
+      toggleFavorite(entry.path);
+      renderDropdown(cwdInput.value.trim());
+    });
+
+    row.addEventListener('mousedown', (e) => {
+      if (e.target === star) return;
+      e.preventDefault();
+      selectEntry(entry, null);
+    });
+
+    row.appendChild(name);
+    row.appendChild(star);
+    fuzzyDropdownEl.appendChild(row);
+  }
+  fuzzyDropdownEl.classList.toggle('show', currentResults.length > 0);
+}
+
+function openDropdown() {
+  renderDropdown(cwdInput.value.trim());
+}
+
+function closeDropdown() {
+  fuzzyDropdownEl.classList.remove('show');
+  fuzzyDropdownEl.textContent = '';
+  currentResults = [];
+  highlightedIndex = -1;
+}
+
 async function refreshSessions() {
   try {
     const res = await fetch(`${API_BASE}/api/sessions`);
