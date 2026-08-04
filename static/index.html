@@ -117,9 +117,7 @@
     padding: 16px;
     border: 1px solid var(--border);
   }
-  .chip-group { margin-bottom: 12px; }
-  .chip-group-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
-  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .favorites-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
   .chip {
     background: var(--bg);
     border: 1px solid var(--border);
@@ -129,6 +127,43 @@
     color: var(--text);
   }
   .chip.selected { background: var(--accent); color: white; border-color: var(--accent); }
+  .picker { position: relative; }
+  .fuzzy-dropdown {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    margin-top: 4px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    max-height: 260px;
+    overflow-y: auto;
+    z-index: 10;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  }
+  .fuzzy-dropdown.show { display: block; }
+  .fuzzy-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+  .fuzzy-row:not(:last-child) { border-bottom: 1px solid var(--border); }
+  .fuzzy-row.highlighted { background: var(--bg); }
+  .fuzzy-name { font-size: 15px; }
+  .fuzzy-root { color: var(--muted); font-size: 12px; margin-left: 6px; }
+  .fuzzy-star {
+    background: none;
+    border: none;
+    font-size: 18px;
+    line-height: 1;
+    color: var(--muted);
+    padding: 4px;
+  }
+  .fuzzy-star.active { color: #ffb300; }
   label { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 6px; }
   input[type=text] {
     width: 100%;
