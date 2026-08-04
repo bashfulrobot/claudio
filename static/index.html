@@ -117,9 +117,7 @@
     padding: 16px;
     border: 1px solid var(--border);
   }
-  .chip-group { margin-bottom: 12px; }
-  .chip-group-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
-  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .favorites-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
   .chip {
     background: var(--bg);
     border: 1px solid var(--border);
@@ -129,6 +127,45 @@
     color: var(--text);
   }
   .chip.selected { background: var(--accent); color: white; border-color: var(--accent); }
+  .chip-root { color: var(--muted); font-size: 12px; margin-left: 6px; }
+  .chip.selected .chip-root { color: rgba(255, 255, 255, 0.8); }
+  .picker { position: relative; }
+  .fuzzy-dropdown {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    margin-top: 4px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    max-height: 260px;
+    overflow-y: auto;
+    z-index: 10;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  }
+  .fuzzy-dropdown.show { display: block; }
+  .fuzzy-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+  .fuzzy-row:not(:last-child) { border-bottom: 1px solid var(--border); }
+  .fuzzy-row.highlighted { background: var(--bg); }
+  .fuzzy-name { font-size: 15px; }
+  .fuzzy-root { color: var(--muted); font-size: 12px; margin-left: 6px; }
+  .fuzzy-star {
+    background: none;
+    border: none;
+    font-size: 18px;
+    line-height: 1;
+    color: var(--muted);
+    padding: 4px;
+  }
+  .fuzzy-star.active { color: #ffb300; }
   label { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 6px; }
   input[type=text] {
     width: 100%;
@@ -188,9 +225,12 @@
   <section>
     <h2>New session</h2>
     <div class="card">
-      <div id="folder-groups"></div>
+      <div id="favorites-row" class="favorites-row"></div>
       <label for="cwd">Folder</label>
-      <input id="cwd" type="text" placeholder="/home/you/git/some-project" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <div class="picker">
+        <input id="cwd" type="text" placeholder="/home/you/git/some-project" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off">
+        <div id="fuzzy-dropdown" class="fuzzy-dropdown"></div>
+      </div>
       <label for="name">Name</label>
       <input id="name" type="text" placeholder="session name" autocapitalize="off" autocorrect="off" spellcheck="false">
       <button id="spawn-btn" class="spawn-btn">Spawn Session</button>
@@ -201,11 +241,18 @@
 
 <script>
 const sessionsEl = document.getElementById('sessions');
-const foldersEl = document.getElementById('folder-groups');
+const favoritesRowEl = document.getElementById('favorites-row');
+const fuzzyDropdownEl = document.getElementById('fuzzy-dropdown');
 const cwdInput = document.getElementById('cwd');
 const nameInput = document.getElementById('name');
 const spawnBtn = document.getElementById('spawn-btn');
 const toastEl = document.getElementById('toast');
+
+const FAVORITES_KEY = 'claudio.favorites';
+let allEntries = [];       // flattened {root, dir, path} across all configured roots
+let favorites = new Set(); // full paths the user has starred, populated at init (see bottom of script)
+let currentResults = [];   // entries currently rendered in the fuzzy dropdown
+let highlightedIndex = -1; // keyboard-selected row within currentResults, -1 = none
 
 // The page may be served at "/" directly or behind a reverse-proxy path
 // prefix (e.g. tailscale serve --set-path=/claudio strips the prefix before
@@ -232,6 +279,199 @@ function basename(p) {
   const parts = p.split('/').filter(Boolean);
   return parts.length ? parts[parts.length - 1] : p;
 }
+
+function loadFavorites() {
+  try {
+    const raw = localStorage.getItem(FAVORITES_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(arr) ? arr.filter(x => typeof x === 'string') : []);
+  } catch (e) {
+    return new Set();
+  }
+}
+
+function saveFavorites() {
+  try {
+    localStorage.setItem(FAVORITES_KEY, JSON.stringify([...favorites]));
+  } catch (e) {
+    // persistence is best-effort (quota exceeded, private browsing, etc.);
+    // the in-memory Set still reflects the toggle, so keep going
+  }
+}
+
+function toggleFavorite(path) {
+  if (favorites.has(path)) {
+    favorites.delete(path);
+  } else {
+    favorites.add(path);
+  }
+  saveFavorites();
+  renderFavoritesRow();
+}
+
+function flattenGroups(groups) {
+  const entries = [];
+  for (const g of (groups || [])) {
+    if (!g.dirs || !g.dirs.length) continue;
+    const root = g.root.replace(/\/$/, '');
+    for (const d of g.dirs) {
+      entries.push({ root, dir: d, path: root + '/' + d });
+    }
+  }
+  return entries;
+}
+
+// Classic fzf-style subsequence match: every character of `query` must
+// appear in `target`, in order, but not necessarily contiguous. Returns a
+// score (higher = better match) or null if `target` doesn't match at all.
+// Contiguous runs and matches near the start of the string score higher.
+function fuzzyScore(query, target) {
+  const q = query.toLowerCase();
+  const t = target.toLowerCase();
+  if (!q) return 0;
+  let qi = 0;
+  let score = 0;
+  let streak = 0;
+  for (let ti = 0; ti < t.length && qi < q.length; ti++) {
+    if (t[ti] === q[qi]) {
+      streak += 1;
+      score += 1 + streak;
+      if (ti === 0) score += 3;
+      qi += 1;
+    } else {
+      streak = 0;
+    }
+  }
+  if (qi < q.length) return null; // not every query character matched
+  score -= t.length * 0.01;       // mild preference for shorter names
+  return score;
+}
+
+function renderFavoritesRow() {
+  favoritesRowEl.textContent = '';
+  const favEntries = allEntries.filter(e => favorites.has(e.path));
+  // Same dir name can exist under more than one root (e.g. ~/git/foo and
+  // ~/dev/foo) — count occurrences so we only add a root label when it's
+  // actually needed to tell two favorited chips apart.
+  const dirCounts = {};
+  for (const entry of favEntries) {
+    dirCounts[entry.dir] = (dirCounts[entry.dir] || 0) + 1;
+  }
+  for (const entry of favEntries) {
+    const chip = el('button', 'chip', entry.dir);
+    chip.type = 'button';
+    if (dirCounts[entry.dir] > 1) {
+      chip.appendChild(el('span', 'chip-root', entry.root));
+    }
+    chip.addEventListener('click', () => selectEntry(entry, chip));
+    favoritesRowEl.appendChild(chip);
+  }
+}
+
+function selectEntry(entry, chipEl) {
+  favoritesRowEl.querySelectorAll('.chip.selected').forEach(c => c.classList.remove('selected'));
+  if (chipEl) chipEl.classList.add('selected');
+  cwdInput.value = entry.path;
+  if (!nameInput.value) nameInput.value = entry.dir;
+  closeDropdown();
+}
+
+function computeResults(query) {
+  if (!query) {
+    const favs = allEntries.filter(e => favorites.has(e.path));
+    const rest = allEntries
+      .filter(e => !favorites.has(e.path))
+      .slice()
+      .sort((a, b) => a.dir.localeCompare(b.dir));
+    return favs.concat(rest).slice(0, 10);
+  }
+  const scored = [];
+  for (const entry of allEntries) {
+    const score = fuzzyScore(query, entry.dir);
+    if (score !== null) scored.push({ entry, score });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, 10).map(s => s.entry);
+}
+
+function renderDropdown(query) {
+  currentResults = computeResults(query);
+  highlightedIndex = -1;
+  fuzzyDropdownEl.textContent = '';
+  for (const entry of currentResults) {
+    const row = el('div', 'fuzzy-row');
+
+    const name = el('span', 'fuzzy-name', entry.dir);
+    name.appendChild(el('span', 'fuzzy-root', entry.root));
+
+    const isFav = favorites.has(entry.path);
+    const star = el('button', 'fuzzy-star' + (isFav ? ' active' : ''), isFav ? '★' : '☆');
+    star.type = 'button';
+    const activateStar = (e) => {
+      // preventDefault on mousedown cancels the browser's default
+      // "move focus to target" action for THIS interaction, so #cwd never
+      // blurs in the first place when a star/row is tapped directly — no
+      // race with the blur handler below for this path. touchstart needs
+      // its own preventDefault: on iOS Safari a touchstart can blur the
+      // focused input before the synthesized mousedown fires, so relying
+      // on mousedown alone silently drops taps on that browser.
+      e.preventDefault();
+      toggleFavorite(entry.path);
+      renderDropdown(cwdInput.value.trim());
+    };
+    star.addEventListener('mousedown', activateStar);
+    star.addEventListener('touchstart', activateStar);
+
+    const activateRow = (e) => {
+      if (e.target === star) return;
+      e.preventDefault();
+      selectEntry(entry, null);
+    };
+    row.addEventListener('mousedown', activateRow);
+    row.addEventListener('touchstart', activateRow);
+
+    row.appendChild(name);
+    row.appendChild(star);
+    fuzzyDropdownEl.appendChild(row);
+  }
+  fuzzyDropdownEl.classList.toggle('show', currentResults.length > 0);
+}
+
+function openDropdown() {
+  renderDropdown(cwdInput.value.trim());
+}
+
+function closeDropdown() {
+  fuzzyDropdownEl.classList.remove('show');
+  fuzzyDropdownEl.textContent = '';
+  currentResults = [];
+  highlightedIndex = -1;
+}
+
+function updateHighlight() {
+  const rows = fuzzyDropdownEl.querySelectorAll('.fuzzy-row');
+  rows.forEach((r, i) => r.classList.toggle('highlighted', i === highlightedIndex));
+}
+
+cwdInput.addEventListener('keydown', (e) => {
+  if (!fuzzyDropdownEl.classList.contains('show')) return;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    highlightedIndex = Math.min(highlightedIndex + 1, currentResults.length - 1);
+    updateHighlight();
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    highlightedIndex = Math.max(highlightedIndex - 1, 0);
+    updateHighlight();
+  } else if (e.key === 'Enter') {
+    if (highlightedIndex >= 0 && currentResults[highlightedIndex]) {
+      e.preventDefault();
+      selectEntry(currentResults[highlightedIndex], null);
+    }
+  } else if (e.key === 'Escape') {
+    closeDropdown();
+  }
+});
 
 async function refreshSessions() {
   try {
@@ -299,27 +539,8 @@ async function loadFolders() {
     const res = await fetch(`${API_BASE}/api/folders`);
     if (!res.ok) return;
     const groups = await res.json();
-    foldersEl.textContent = '';
-    for (const g of (groups || [])) {
-      if (!g.dirs || !g.dirs.length) continue;
-      const wrap = el('div', 'chip-group');
-      wrap.appendChild(el('div', 'chip-group-label', g.root));
-      const chips = el('div', 'chips');
-      for (const d of g.dirs) {
-        const chip = el('button', 'chip', d);
-        chip.type = 'button';
-        chip.addEventListener('click', () => {
-          foldersEl.querySelectorAll('.chip.selected').forEach(c => c.classList.remove('selected'));
-          chip.classList.add('selected');
-          const path = g.root.replace(/\/$/, '') + '/' + d;
-          cwdInput.value = path;
-          if (!nameInput.value) nameInput.value = d;
-        });
-        chips.appendChild(chip);
-      }
-      wrap.appendChild(chips);
-      foldersEl.appendChild(wrap);
-    }
+    allEntries = flattenGroups(groups);
+    renderFavoritesRow();
   } catch (e) {
     // folder picker is a convenience; failing silently is fine, free-text still works
   }
@@ -329,6 +550,36 @@ cwdInput.addEventListener('input', () => {
   if (!nameInput.value && cwdInput.value) {
     nameInput.value = basename(cwdInput.value);
   }
+  renderDropdown(cwdInput.value.trim());
+});
+
+let blurTimer = null;
+
+cwdInput.addEventListener('focus', () => {
+  // Cancel a pending close from a just-prior blur — otherwise a rapid
+  // blur-then-refocus (e.g. a mis-tap) leaves a stale timer that tears
+  // the dropdown down ~150ms later even though the user is now actively
+  // focused on and interacting with the field again.
+  if (blurTimer) {
+    clearTimeout(blurTimer);
+    blurTimer = null;
+  }
+  openDropdown();
+});
+
+cwdInput.addEventListener('blur', () => {
+  // Row/star taps call preventDefault() in their own mousedown/touchstart
+  // handler, which cancels the browser's focus-loss action for THAT
+  // interaction, so blur never fires for a direct row/star tap at all —
+  // no race to win there. This delay exists for the OTHER ways #cwd can
+  // blur (tapping elsewhere on the page, Tab-based focus change), so a
+  // stray blur doesn't tear the dropdown down before a same-tick related
+  // interaction finishes. The `focus` listener above cancels this timer
+  // if the user refocuses before it fires.
+  blurTimer = setTimeout(() => {
+    closeDropdown();
+    blurTimer = null;
+  }, 150);
 });
 
 spawnBtn.addEventListener('click', async () => {
@@ -348,7 +599,7 @@ spawnBtn.addEventListener('click', async () => {
     toast(`Launching "${name}"…`);
     cwdInput.value = '';
     nameInput.value = '';
-    foldersEl.querySelectorAll('.chip.selected').forEach(c => c.classList.remove('selected'));
+    favoritesRowEl.querySelectorAll('.chip.selected').forEach(c => c.classList.remove('selected'));
     setTimeout(refreshSessions, 1500);
   } catch (err) {
     toast(err.message);
@@ -358,6 +609,7 @@ spawnBtn.addEventListener('click', async () => {
   }
 });
 
+favorites = loadFavorites();
 loadFolders();
 refreshSessions();
 setInterval(refreshSessions, 4000);
