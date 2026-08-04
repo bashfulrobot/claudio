@@ -372,7 +372,7 @@ function selectEntry(entry, chipEl) {
   favoritesRowEl.querySelectorAll('.chip.selected').forEach(c => c.classList.remove('selected'));
   if (chipEl) chipEl.classList.add('selected');
   cwdInput.value = entry.path;
-  if (!nameInput.value) nameInput.value = entry.dir;
+  if (!nameInput.value) nameInput.value = basename(entry.dir);
   closeDropdown();
 }
 
