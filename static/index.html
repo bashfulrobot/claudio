@@ -345,6 +345,25 @@ function fuzzyScore(query, target) {
   return score;
 }
 
+function renderFavoritesRow() {
+  favoritesRowEl.textContent = '';
+  const favEntries = allEntries.filter(e => favorites.has(e.path));
+  for (const entry of favEntries) {
+    const chip = el('button', 'chip', entry.dir);
+    chip.type = 'button';
+    chip.addEventListener('click', () => selectEntry(entry, chip));
+    favoritesRowEl.appendChild(chip);
+  }
+}
+
+function selectEntry(entry, chipEl) {
+  favoritesRowEl.querySelectorAll('.chip.selected').forEach(c => c.classList.remove('selected'));
+  if (chipEl) chipEl.classList.add('selected');
+  cwdInput.value = entry.path;
+  if (!nameInput.value) nameInput.value = entry.dir;
+  closeDropdown();
+}
+
 async function refreshSessions() {
   try {
     const res = await fetch(`${API_BASE}/api/sessions`);
@@ -411,27 +430,8 @@ async function loadFolders() {
     const res = await fetch(`${API_BASE}/api/folders`);
     if (!res.ok) return;
     const groups = await res.json();
-    foldersEl.textContent = '';
-    for (const g of (groups || [])) {
-      if (!g.dirs || !g.dirs.length) continue;
-      const wrap = el('div', 'chip-group');
-      wrap.appendChild(el('div', 'chip-group-label', g.root));
-      const chips = el('div', 'chips');
-      for (const d of g.dirs) {
-        const chip = el('button', 'chip', d);
-        chip.type = 'button';
-        chip.addEventListener('click', () => {
-          foldersEl.querySelectorAll('.chip.selected').forEach(c => c.classList.remove('selected'));
-          chip.classList.add('selected');
-          const path = g.root.replace(/\/$/, '') + '/' + d;
-          cwdInput.value = path;
-          if (!nameInput.value) nameInput.value = d;
-        });
-        chips.appendChild(chip);
-      }
-      wrap.appendChild(chips);
-      foldersEl.appendChild(wrap);
-    }
+    allEntries = flattenGroups(groups);
+    renderFavoritesRow();
   } catch (e) {
     // folder picker is a convenience; failing silently is fine, free-text still works
   }
@@ -470,6 +470,7 @@ spawnBtn.addEventListener('click', async () => {
   }
 });
 
+favorites = loadFavorites();
 loadFolders();
 refreshSessions();
 setInterval(refreshSessions, 4000);
