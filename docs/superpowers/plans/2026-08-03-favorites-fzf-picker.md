@@ -476,17 +476,28 @@ function renderDropdown(query) {
     const isFav = favorites.has(entry.path);
     const star = el('button', 'fuzzy-star' + (isFav ? ' active' : ''), isFav ? '★' : '☆');
     star.type = 'button';
-    star.addEventListener('mousedown', (e) => {
-      e.preventDefault(); // don't let the input blur before the click registers
+    const activateStar = (e) => {
+      // preventDefault on mousedown cancels the browser's default
+      // "move focus to target" action for THIS interaction, so #cwd never
+      // blurs in the first place when a star/row is tapped directly — no
+      // race with Task 6's blur handler for this path. touchstart needs
+      // its own preventDefault: on iOS Safari a touchstart can blur the
+      // focused input before the synthesized mousedown fires, so relying
+      // on mousedown alone silently drops taps on that browser.
+      e.preventDefault();
       toggleFavorite(entry.path);
       renderDropdown(cwdInput.value.trim());
-    });
+    };
+    star.addEventListener('mousedown', activateStar);
+    star.addEventListener('touchstart', activateStar);
 
-    row.addEventListener('mousedown', (e) => {
+    const activateRow = (e) => {
       if (e.target === star) return;
       e.preventDefault();
       selectEntry(entry, null);
-    });
+    };
+    row.addEventListener('mousedown', activateRow);
+    row.addEventListener('touchstart', activateRow);
 
     row.appendChild(name);
     row.appendChild(star);
@@ -506,6 +517,8 @@ function closeDropdown() {
   highlightedIndex = -1;
 }
 ```
+
+`touchstart` handlers are included alongside `mousedown` because this is an explicitly phone-first tool, and iOS Safari has a documented quirk where a `touchstart` on a new target can blur the currently-focused input before the synthesized `mousedown` fires — relying on `mousedown` alone would silently eat row/star taps on iPhone. Calling `preventDefault()` in `touchstart` also suppresses the browser's follow-up synthesized `mousedown`/`click` for that same physical tap, so there's no double-invocation on touch devices; on desktop, `touchstart` simply never fires, so only `mousedown` runs. (This was caught during Task 5's code quality review, not present in the original task text — treat this amended version as canonical.)
 
 Note: `★` / `☆` above are literal UTF-8 characters (filled/outline star) — `static/index.html` already declares `<meta charset="utf-8">`, so paste them as-is; no escape sequence needed.
 
@@ -593,8 +606,13 @@ cwdInput.addEventListener('input', () => {
 cwdInput.addEventListener('focus', openDropdown);
 
 cwdInput.addEventListener('blur', () => {
-  // Delay so a row/star mousedown's own handler runs before we tear the
-  // dropdown down (mousedown fires before blur's default focus-loss).
+  // Row/star taps call preventDefault() in their own mousedown/touchstart
+  // handler, which cancels the browser's focus-loss action for THAT
+  // interaction, so blur never fires for a direct row/star tap at all —
+  // no race to win there. This delay exists for the OTHER ways #cwd can
+  // blur (tapping elsewhere on the page, Tab-based focus change), so a
+  // stray blur doesn't tear the dropdown down before a same-tick related
+  // interaction finishes.
   setTimeout(closeDropdown, 150);
 });
 ```
