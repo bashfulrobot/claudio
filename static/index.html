@@ -436,6 +436,31 @@ function closeDropdown() {
   highlightedIndex = -1;
 }
 
+function updateHighlight() {
+  const rows = fuzzyDropdownEl.querySelectorAll('.fuzzy-row');
+  rows.forEach((r, i) => r.classList.toggle('highlighted', i === highlightedIndex));
+}
+
+cwdInput.addEventListener('keydown', (e) => {
+  if (!fuzzyDropdownEl.classList.contains('show')) return;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    highlightedIndex = Math.min(highlightedIndex + 1, currentResults.length - 1);
+    updateHighlight();
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    highlightedIndex = Math.max(highlightedIndex - 1, 0);
+    updateHighlight();
+  } else if (e.key === 'Enter') {
+    if (highlightedIndex >= 0 && currentResults[highlightedIndex]) {
+      e.preventDefault();
+      selectEntry(currentResults[highlightedIndex], null);
+    }
+  } else if (e.key === 'Escape') {
+    closeDropdown();
+  }
+});
+
 async function refreshSessions() {
   try {
     const res = await fetch(`${API_BASE}/api/sessions`);
@@ -513,6 +538,20 @@ cwdInput.addEventListener('input', () => {
   if (!nameInput.value && cwdInput.value) {
     nameInput.value = basename(cwdInput.value);
   }
+  renderDropdown(cwdInput.value.trim());
+});
+
+cwdInput.addEventListener('focus', openDropdown);
+
+cwdInput.addEventListener('blur', () => {
+  // Row/star taps call preventDefault() in their own mousedown/touchstart
+  // handler, which cancels the browser's focus-loss action for THAT
+  // interaction, so blur never fires for a direct row/star tap at all —
+  // no race to win there. This delay exists for the OTHER ways #cwd can
+  // blur (tapping elsewhere on the page, Tab-based focus change), so a
+  // stray blur doesn't tear the dropdown down before a same-tick related
+  // interaction finishes.
+  setTimeout(closeDropdown, 150);
 });
 
 spawnBtn.addEventListener('click', async () => {
