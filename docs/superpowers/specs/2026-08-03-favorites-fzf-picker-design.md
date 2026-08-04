@@ -1,7 +1,7 @@
 # Favorites + fuzzy-search folder picker
 
 Date: 2026-08-03
-Status: Approved, ready for implementation plan
+Status: Implemented
 
 ## Problem
 
