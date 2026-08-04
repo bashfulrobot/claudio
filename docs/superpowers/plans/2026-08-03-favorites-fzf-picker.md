@@ -603,7 +603,19 @@ cwdInput.addEventListener('input', () => {
   renderDropdown(cwdInput.value.trim());
 });
 
-cwdInput.addEventListener('focus', openDropdown);
+let blurTimer = null;
+
+cwdInput.addEventListener('focus', () => {
+  // Cancel a pending close from a just-prior blur — otherwise a rapid
+  // blur-then-refocus (e.g. a mis-tap) leaves a stale timer that tears
+  // the dropdown down ~150ms later even though the user is now actively
+  // focused on and interacting with the field again.
+  if (blurTimer) {
+    clearTimeout(blurTimer);
+    blurTimer = null;
+  }
+  openDropdown();
+});
 
 cwdInput.addEventListener('blur', () => {
   // Row/star taps call preventDefault() in their own mousedown/touchstart
@@ -612,10 +624,16 @@ cwdInput.addEventListener('blur', () => {
   // no race to win there. This delay exists for the OTHER ways #cwd can
   // blur (tapping elsewhere on the page, Tab-based focus change), so a
   // stray blur doesn't tear the dropdown down before a same-tick related
-  // interaction finishes.
-  setTimeout(closeDropdown, 150);
+  // interaction finishes. The `focus` listener above cancels this timer
+  // if the user refocuses before it fires.
+  blurTimer = setTimeout(() => {
+    closeDropdown();
+    blurTimer = null;
+  }, 150);
 });
 ```
+
+(This `blurTimer` guard was added after Task 6's code quality review caught a real bug in the original plan text: an uncancelled timer could close the dropdown out from under an actively-focused user after a rapid blur-then-refocus. Treat this version as canonical.)
 
 - [ ] **Step 3: Manually verify typing, keyboard nav, and blur behavior**
 
@@ -638,6 +656,10 @@ Expected: dropdown closes (after the ~150ms delay).
 Click into the field, then click a star on one of the rows:
 
 Expected: dropdown stays open (does not close from the implicit blur), star toggles, row list re-renders.
+
+Click into the field (dropdown opens), click elsewhere to blur (schedules the 150ms close), then click back into the field again quickly (well within 150ms):
+
+Expected: dropdown stays open and usable — the stale close from the first blur must not fire ~150ms after the *first* blur and tear down the dropdown while the field is focused again. This exercises the `blurTimer` cancel-on-refocus guard added after Task 6's code quality review caught this as a real bug in the original plan.
 
 - [ ] **Step 4: Commit**
 
