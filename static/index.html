@@ -41,6 +41,99 @@
   }
   h1 { font-size: 28px; margin: 0; }
   .subtitle { color: var(--muted); font-size: 14px; margin-top: 2px; }
+  .header-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .header-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; padding-top: 2px; }
+  .icon-btn {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 18px;
+    position: relative;
+    flex-shrink: 0;
+  }
+  .icon-btn:active { opacity: 0.7; }
+  .icon-btn.primary { background: var(--accent); border-color: var(--accent); color: white; font-size: 22px; font-weight: 600; }
+  .fav-picker { position: relative; }
+  .fav-count {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 3px;
+    border-radius: 999px;
+    background: #ffb300;
+    color: #000;
+    font-size: 10px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+  }
+  .fav-dropdown {
+    display: none;
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    width: 280px;
+    max-width: 82vw;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    max-height: 320px;
+    overflow-y: auto;
+    z-index: 30;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  }
+  .fav-dropdown.show { display: block; }
+  .fav-empty { padding: 16px 14px; color: var(--muted); font-size: 13px; text-align: center; }
+  .modal-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 40;
+    align-items: flex-start;
+    justify-content: center;
+    padding: max(env(safe-area-inset-top), 16px) 16px 16px;
+    overflow-y: auto;
+  }
+  .modal-backdrop.show { display: flex; }
+  .modal {
+    background: var(--bg);
+    border-radius: 16px;
+    border: 1px solid var(--border);
+    width: 100%;
+    max-width: 520px;
+    margin-top: 8px;
+    padding: 16px 16px calc(env(safe-area-inset-bottom) + 18px);
+  }
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 4px;
+  }
+  .modal-header h2 { font-size: 19px; margin: 0; }
+  .modal-close {
+    background: var(--card-elevated);
+    border: none;
+    color: var(--muted);
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    font-size: 16px;
+    line-height: 1;
+    flex-shrink: 0;
+  }
+  .modal-close:active { opacity: 0.7; }
   main { padding: 8px 16px 40px; max-width: 640px; margin: 0 auto; }
   section { margin-top: 24px; }
   h2 {
@@ -138,18 +231,6 @@
     padding: 16px;
     border: 1px solid var(--border);
   }
-  .favorites-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-  .chip {
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 8px 14px;
-    font-size: 14px;
-    color: var(--text);
-  }
-  .chip.selected { background: var(--accent); color: white; border-color: var(--accent); }
-  .chip-root { color: var(--muted); font-size: 12px; margin-left: 6px; }
-  .chip.selected .chip-root { color: rgba(255, 255, 255, 0.8); }
   .picker { position: relative; }
   .fuzzy-dropdown {
     display: none;
@@ -275,8 +356,19 @@
 </head>
 <body>
 <header>
-  <h1>Claudio</h1>
-  <div class="subtitle">Claude Code sessions on this machine</div>
+  <div class="header-top">
+    <div>
+      <h1>Claudio</h1>
+      <div class="subtitle">Claude Code sessions on this machine</div>
+    </div>
+    <div class="header-actions">
+      <div id="fav-picker" class="fav-picker">
+        <button id="fav-btn" class="icon-btn" type="button" aria-label="Favorites">★<span id="fav-count" class="fav-count"></span></button>
+        <div id="fav-dropdown" class="fav-dropdown"></div>
+      </div>
+      <button id="add-btn" class="icon-btn primary" type="button" aria-label="New session">+</button>
+    </div>
+  </div>
 </header>
 <main>
   <section>
@@ -285,70 +377,79 @@
       <div class="empty">Loading…</div>
     </div>
   </section>
-
-  <section>
-    <h2>New session</h2>
-    <div class="card">
-      <div id="favorites-row" class="favorites-row"></div>
-      <label for="cwd">Folder</label>
-      <div class="picker">
-        <input id="cwd" type="text" placeholder="/home/you/git/some-project" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off">
-        <div id="fuzzy-dropdown" class="fuzzy-dropdown"></div>
-      </div>
-      <label for="name">Name</label>
-      <input id="name" type="text" placeholder="session name" autocapitalize="off" autocorrect="off" spellcheck="false">
-
-      <details id="spawn-options" class="options">
-        <summary><span id="options-label">Options</span></summary>
-
-        <label class="check-row">
-          <input id="worktree" type="checkbox" checked>
-          <span>Isolate in a git worktree</span>
-        </label>
-
-        <label for="model">Model</label>
-        <select id="model">
-          <option value="">Default</option>
-          <option value="sonnet">Sonnet</option>
-          <option value="opus">Opus</option>
-          <option value="fable">Fable</option>
-          <option value="haiku">Haiku</option>
-        </select>
-
-        <label for="effort">Effort</label>
-        <select id="effort">
-          <option value="">Default</option>
-          <option value="low">Low</option>
-          <option value="medium">Medium</option>
-          <option value="high">High</option>
-          <option value="xhigh">XHigh</option>
-          <option value="max">Max</option>
-        </select>
-
-        <label for="permission-mode">Permission mode</label>
-        <select id="permission-mode">
-          <option value="">Default</option>
-          <option value="acceptEdits">Accept edits</option>
-          <option value="auto">Auto</option>
-          <option value="dontAsk">Don't ask</option>
-          <option value="manual">Manual</option>
-          <option value="plan">Plan</option>
-          <option value="bypassPermissions">Bypass permissions</option>
-        </select>
-
-        <label for="prompt">Initial prompt</label>
-        <textarea id="prompt" rows="3" placeholder="optional — sent as the first message" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
-      </details>
-
-      <button id="spawn-btn" class="spawn-btn">Spawn Session</button>
-    </div>
-  </section>
 </main>
 <div id="toast" class="toast"></div>
 
+<div id="modal-backdrop" class="modal-backdrop">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>New session</h2>
+      <button id="modal-close" class="modal-close" type="button" aria-label="Close">✕</button>
+    </div>
+
+    <label for="cwd">Folder</label>
+    <div class="picker">
+      <input id="cwd" type="text" placeholder="/home/you/git/some-project" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off">
+      <div id="fuzzy-dropdown" class="fuzzy-dropdown"></div>
+    </div>
+    <label for="name">Name</label>
+    <input id="name" type="text" placeholder="session name" autocapitalize="off" autocorrect="off" spellcheck="false">
+
+    <details id="spawn-options" class="options">
+      <summary><span id="options-label">Options</span></summary>
+
+      <label class="check-row">
+        <input id="worktree" type="checkbox" checked>
+        <span>Isolate in a git worktree</span>
+      </label>
+
+      <label for="model">Model</label>
+      <select id="model">
+        <option value="">Default</option>
+        <option value="sonnet">Sonnet</option>
+        <option value="opus">Opus</option>
+        <option value="fable">Fable</option>
+        <option value="haiku">Haiku</option>
+      </select>
+
+      <label for="effort">Effort</label>
+      <select id="effort">
+        <option value="">Default</option>
+        <option value="low">Low</option>
+        <option value="medium">Medium</option>
+        <option value="high">High</option>
+        <option value="xhigh">XHigh</option>
+        <option value="max">Max</option>
+      </select>
+
+      <label for="permission-mode">Permission mode</label>
+      <select id="permission-mode">
+        <option value="">Default</option>
+        <option value="acceptEdits">Accept edits</option>
+        <option value="auto">Auto</option>
+        <option value="dontAsk">Don't ask</option>
+        <option value="manual">Manual</option>
+        <option value="plan">Plan</option>
+        <option value="bypassPermissions">Bypass permissions</option>
+      </select>
+
+      <label for="prompt">Initial prompt</label>
+      <textarea id="prompt" rows="3" placeholder="optional — sent as the first message" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
+    </details>
+
+    <button id="spawn-btn" class="spawn-btn">Spawn Session</button>
+  </div>
+</div>
+
 <script>
 const sessionsEl = document.getElementById('sessions');
-const favoritesRowEl = document.getElementById('favorites-row');
+const favBtnEl = document.getElementById('fav-btn');
+const favPickerEl = document.getElementById('fav-picker');
+const favDropdownEl = document.getElementById('fav-dropdown');
+const favCountEl = document.getElementById('fav-count');
+const addBtnEl = document.getElementById('add-btn');
+const modalBackdropEl = document.getElementById('modal-backdrop');
+const modalCloseEl = document.getElementById('modal-close');
 const fuzzyDropdownEl = document.getElementById('fuzzy-dropdown');
 const cwdInput = document.getElementById('cwd');
 const nameInput = document.getElementById('name');
@@ -453,7 +554,7 @@ function toggleFavorite(path) {
     favorites.add(path);
   }
   saveFavorites();
-  renderFavoritesRow();
+  renderFavDropdown();
 }
 
 function flattenGroups(groups) {
@@ -494,32 +595,90 @@ function fuzzyScore(query, target) {
   return score;
 }
 
-function renderFavoritesRow() {
-  favoritesRowEl.textContent = '';
-  const favEntries = allEntries.filter(e => favorites.has(e.path));
-  // Same dir name can exist under more than one root (e.g. ~/git/foo and
-  // ~/dev/foo) — count occurrences so we only add a root label when it's
-  // actually needed to tell two favorited chips apart.
-  const dirCounts = {};
-  for (const entry of favEntries) {
-    dirCounts[entry.dir] = (dirCounts[entry.dir] || 0) + 1;
+// Favorites live in a dropdown off the header star button, not inline in the
+// form — this is the "consolidated" view: always shows root (not just when
+// two favorited dirs share a name, like the old chip row did), since a
+// dropdown has the vertical room a wrapping chip wall on a phone didn't.
+// Tapping a row opens the new-session modal pre-filled with that folder;
+// tapping the star un-favorites in place without opening anything.
+function renderFavDropdown() {
+  favDropdownEl.textContent = '';
+  const favEntries = allEntries
+    .filter(e => favorites.has(e.path))
+    .slice()
+    .sort((a, b) => a.dir.localeCompare(b.dir));
+  favCountEl.textContent = favEntries.length ? String(favEntries.length) : '';
+
+  if (!favEntries.length) {
+    favDropdownEl.appendChild(el('div', 'fav-empty', 'No favorites yet — star a folder from the picker in New session.'));
+    return;
   }
+
   for (const entry of favEntries) {
-    const chip = el('button', 'chip', entry.dir);
-    chip.type = 'button';
-    if (dirCounts[entry.dir] > 1) {
-      chip.appendChild(el('span', 'chip-root', entry.root));
-    }
-    chip.addEventListener('click', () => selectEntry(entry, chip));
-    favoritesRowEl.appendChild(chip);
+    const row = el('div', 'fuzzy-row');
+
+    const name = el('span', 'fuzzy-name', entry.dir);
+    name.appendChild(el('span', 'fuzzy-root', entry.root));
+
+    const star = el('button', 'fuzzy-star active', '★');
+    star.type = 'button';
+    const unstar = (e) => {
+      e.preventDefault();
+      toggleFavorite(entry.path);
+    };
+    star.addEventListener('mousedown', unstar);
+    star.addEventListener('touchstart', unstar);
+
+    const activateRow = (e) => {
+      if (e.target === star) return;
+      e.preventDefault();
+      closeFavDropdown();
+      openModal(entry);
+    };
+    row.addEventListener('mousedown', activateRow);
+    row.addEventListener('touchstart', activateRow);
+
+    row.appendChild(name);
+    row.appendChild(star);
+    favDropdownEl.appendChild(row);
   }
 }
 
-function selectEntry(entry, chipEl) {
-  favoritesRowEl.querySelectorAll('.chip.selected').forEach(c => c.classList.remove('selected'));
-  if (chipEl) chipEl.classList.add('selected');
+function openFavDropdown() {
+  renderFavDropdown();
+  favDropdownEl.classList.add('show');
+}
+
+function closeFavDropdown() {
+  favDropdownEl.classList.remove('show');
+}
+
+function selectEntry(entry) {
   cwdInput.value = entry.path;
   if (!nameInput.value) nameInput.value = basename(entry.dir);
+  closeDropdown();
+}
+
+// The modal always starts from a clean slate: openModal(null) (the header +
+// button) gives a blank form, openModal(entry) (a favorites-dropdown row)
+// pre-fills folder+name. Either way the previous open's leftovers never
+// leak into the next one.
+function openModal(entry) {
+  cwdInput.value = '';
+  nameInput.value = '';
+  resetSpawnOptions();
+  closeDropdown();
+  closeFavDropdown();
+  if (entry) {
+    cwdInput.value = entry.path;
+    nameInput.value = basename(entry.dir);
+  }
+  modalBackdropEl.classList.add('show');
+  if (!entry) cwdInput.focus();
+}
+
+function closeModal() {
+  modalBackdropEl.classList.remove('show');
   closeDropdown();
 }
 
@@ -572,7 +731,7 @@ function renderDropdown(query) {
     const activateRow = (e) => {
       if (e.target === star) return;
       e.preventDefault();
-      selectEntry(entry, null);
+      selectEntry(entry);
     };
     row.addEventListener('mousedown', activateRow);
     row.addEventListener('touchstart', activateRow);
@@ -613,7 +772,7 @@ cwdInput.addEventListener('keydown', (e) => {
   } else if (e.key === 'Enter') {
     if (highlightedIndex >= 0 && currentResults[highlightedIndex]) {
       e.preventDefault();
-      selectEntry(currentResults[highlightedIndex], null);
+      selectEntry(currentResults[highlightedIndex]);
     }
   } else if (e.key === 'Escape') {
     closeDropdown();
@@ -743,7 +902,7 @@ async function loadFolders() {
     if (!res.ok) return;
     const groups = await res.json();
     allEntries = flattenGroups(groups);
-    renderFavoritesRow();
+    renderFavDropdown();
   } catch (e) {
     // folder picker is a convenience; failing silently is fine, free-text still works
   }
@@ -820,10 +979,8 @@ spawnBtn.addEventListener('click', async () => {
       toast(`Launching "${name}"…`);
     }
 
-    cwdInput.value = '';
-    nameInput.value = '';
     resetSpawnOptions();
-    favoritesRowEl.querySelectorAll('.chip.selected').forEach(c => c.classList.remove('selected'));
+    closeModal();
     setTimeout(refreshSessions, 1500);
   } catch (err) {
     toast(err.message);
@@ -831,6 +988,26 @@ spawnBtn.addEventListener('click', async () => {
     spawnBtn.disabled = false;
     spawnBtn.textContent = 'Spawn Session';
   }
+});
+
+addBtnEl.addEventListener('click', () => openModal(null));
+modalCloseEl.addEventListener('click', closeModal);
+modalBackdropEl.addEventListener('click', (e) => {
+  if (e.target === modalBackdropEl) closeModal(); // backdrop itself, not the modal card
+});
+
+favBtnEl.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (favDropdownEl.classList.contains('show')) closeFavDropdown();
+  else openFavDropdown();
+});
+document.addEventListener('click', (e) => {
+  if (favDropdownEl.classList.contains('show') && !favPickerEl.contains(e.target)) closeFavDropdown();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (favDropdownEl.classList.contains('show')) closeFavDropdown();
+  else if (modalBackdropEl.classList.contains('show')) closeModal();
 });
 
 favorites = loadFavorites();
