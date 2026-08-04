@@ -239,11 +239,18 @@
 
 <script>
 const sessionsEl = document.getElementById('sessions');
-const foldersEl = document.getElementById('folder-groups');
+const favoritesRowEl = document.getElementById('favorites-row');
+const fuzzyDropdownEl = document.getElementById('fuzzy-dropdown');
 const cwdInput = document.getElementById('cwd');
 const nameInput = document.getElementById('name');
 const spawnBtn = document.getElementById('spawn-btn');
 const toastEl = document.getElementById('toast');
+
+const FAVORITES_KEY = 'claudio.favorites';
+let allEntries = [];       // flattened {root, dir, path} across all configured roots
+let favorites = new Set(); // full paths the user has starred, populated at init (see bottom of script)
+let currentResults = [];   // entries currently rendered in the fuzzy dropdown
+let highlightedIndex = -1; // keyboard-selected row within currentResults, -1 = none
 
 // The page may be served at "/" directly or behind a reverse-proxy path
 // prefix (e.g. tailscale serve --set-path=/claudio strips the prefix before
@@ -269,6 +276,68 @@ function el(tag, className, text) {
 function basename(p) {
   const parts = p.split('/').filter(Boolean);
   return parts.length ? parts[parts.length - 1] : p;
+}
+
+function loadFavorites() {
+  try {
+    const raw = localStorage.getItem(FAVORITES_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch (e) {
+    return new Set();
+  }
+}
+
+function saveFavorites() {
+  localStorage.setItem(FAVORITES_KEY, JSON.stringify([...favorites]));
+}
+
+function toggleFavorite(path) {
+  if (favorites.has(path)) {
+    favorites.delete(path);
+  } else {
+    favorites.add(path);
+  }
+  saveFavorites();
+  renderFavoritesRow();
+}
+
+function flattenGroups(groups) {
+  const entries = [];
+  for (const g of (groups || [])) {
+    if (!g.dirs || !g.dirs.length) continue;
+    const root = g.root.replace(/\/$/, '');
+    for (const d of g.dirs) {
+      entries.push({ root, dir: d, path: root + '/' + d });
+    }
+  }
+  return entries;
+}
+
+// Classic fzf-style subsequence match: every character of `query` must
+// appear in `target`, in order, but not necessarily contiguous. Returns a
+// score (higher = better match) or null if `target` doesn't match at all.
+// Contiguous runs and matches near the start of the string score higher.
+function fuzzyScore(query, target) {
+  const q = query.toLowerCase();
+  const t = target.toLowerCase();
+  if (!q) return 0;
+  let qi = 0;
+  let score = 0;
+  let streak = 0;
+  for (let ti = 0; ti < t.length && qi < q.length; ti++) {
+    if (t[ti] === q[qi]) {
+      streak += 1;
+      score += 1 + streak;
+      if (ti === 0) score += 3;
+      qi += 1;
+    } else {
+      streak = 0;
+    }
+  }
+  if (qi < q.length) return null; // not every query character matched
+  score -= t.length * 0.01;       // mild preference for shorter names
+  return score;
 }
 
 async function refreshSessions() {
