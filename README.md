@@ -11,9 +11,21 @@ subscription, the same as if you'd typed `claude` in a terminal.
 
 - **Spawn** — start a full, persistent `claude --bg --remote-control` session
   in a folder of your choice. Not a one-shot `-p` call: a real background
-  session you can keep talking to.
+  session you can keep talking to. Optionally set a model, effort level,
+  permission mode, or an initial prompt — leave any of them blank and
+  `claude` falls through to your own `~/.claude/settings.json`, exactly as
+  if claudio weren't in the way.
+- **Worktree-isolated by default** — every new session gets its own git
+  worktree (`claude --worktree`), so two sessions spawned in the same repo
+  never stomp on each other's uncommitted work. Skipped automatically for
+  non-git folders or a folder that's already a worktree; can be turned off
+  per spawn.
 - **List** — see every session currently running, via `claude agents --json`.
-- **Delete** — permanently remove a session with `claude rm <id>`.
+- **Stop** — pause a session while keeping its conversation, via
+  `claude stop <id>`. Resume it later from a terminal with
+  `claude attach <id>`. Unlike Delete, this leaves the worktree in place.
+- **Delete** — permanently remove a session with `claude rm <id>`, which
+  also removes its worktree if it has one.
 
 Once a session is spawned with `--remote-control`, it's also visible and
 controllable from Anthropic's own [claude.ai/code](https://claude.ai/code)
@@ -52,6 +64,7 @@ phone without exposing it to the whole LAN.
 |---|---|---|
 | `-addr` | `127.0.0.1:8787` | Listen address |
 | `-claude-bin` | `claude` | Path to the `claude` CLI binary |
+| `-git-bin` | `git` | Path to the `git` binary, used to decide whether a new session can be worktree-isolated |
 | `-roots` | `~/git,~/dev` | Comma-separated project root dirs offered in the folder picker |
 
 ## API
@@ -59,9 +72,43 @@ phone without exposing it to the whole LAN.
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/sessions` | List running sessions (`claude agents --json`) |
-| `POST` | `/api/sessions` | Spawn `{"cwd": "...", "name": "..."}` |
-| `DELETE` | `/api/sessions/{id}` | Delete a session by its `id` (`claude rm <id>`) |
+| `POST` | `/api/sessions` | Spawn a session — see body below |
+| `POST` | `/api/sessions/{id}/stop` | Stop a session, keeping its conversation (`claude stop <id>`) |
+| `DELETE` | `/api/sessions/{id}` | Permanently delete a session and its worktree (`claude rm <id>`) |
 | `GET` | `/api/folders` | List immediate subdirectories of the configured roots |
+
+`POST /api/sessions` body:
+
+```json
+{
+  "cwd": "/home/you/git/some-project",
+  "name": "optional session name",
+  "worktree": true,
+  "model": "opus",
+  "effort": "high",
+  "permissionMode": "acceptEdits",
+  "prompt": "optional first message"
+}
+```
+
+Only `cwd` is required. `worktree` defaults to `true` when omitted — every
+new session is isolated into its own git worktree unless you explicitly set
+it to `false`, the target folder isn't a git repo, or it's already a
+worktree. `model`, `effort`, `permissionMode`, and `prompt` are all optional;
+leaving any of them out omits the matching `claude` flag entirely rather than
+sending some default value, so `~/.claude/settings.json` decides.
+
+The response reports what actually happened:
+
+```json
+{ "name": "some-project", "worktree": "some-project" }
+```
+
+or, when isolation was skipped:
+
+```json
+{ "name": "some-project", "worktreeSkipped": "not a git repo" }
+```
 
 ## NixOS
 

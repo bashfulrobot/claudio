@@ -53,9 +53,7 @@
     border-radius: 14px;
     padding: 14px 16px;
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
+    flex-direction: column;
     border: 1px solid var(--border);
   }
   .session-info { min-width: 0; flex: 1; }
@@ -84,6 +82,19 @@
   }
   .badge.busy, .badge.working { background: #4a3b00; color: #ffd54a; }
   .badge.idle, .badge.done { background: #0e3d1d; color: #5fe38a; }
+  .badge.worktree { background: var(--card-elevated); color: var(--muted); }
+  .session-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .session-toggle {
+    min-width: 0;
+    flex: 1;
+    display: block;
+    text-align: left;
+    background: none;
+    border: none;
+    padding: 0;
+    color: inherit;
+    font: inherit;
+  }
   .kill-btn {
     background: var(--danger);
     color: white;
@@ -95,6 +106,23 @@
     flex-shrink: 0;
   }
   .kill-btn:active { opacity: 0.7; }
+  .expand-row {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+  .stop-btn {
+    background: var(--card-elevated);
+    color: #ffd54a;
+    border: none;
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .stop-btn:active { opacity: 0.7; }
   .empty {
     color: var(--muted);
     text-align: center;
@@ -157,14 +185,57 @@
   }
   .fuzzy-star.active { color: #ffb300; }
   label { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 6px; }
-  input[type=text] {
+  input[type=text], select, textarea {
     width: 100%;
     padding: 12px 14px;
     border-radius: 10px;
     border: 1px solid var(--border);
     background: var(--bg);
     color: var(--text);
+    /* 16px is load-bearing: anything smaller triggers Safari's
+       focus-triggered auto-zoom on iOS, which is miserable one-handed. */
     font-size: 16px;
+    font-family: inherit;
+  }
+  select {
+    -webkit-appearance: none;
+    appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%2398989f'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 14px center;
+    padding-right: 34px;
+  }
+  textarea { min-height: 72px; resize: vertical; }
+  .options {
+    margin-top: 14px;
+    border-top: 1px solid var(--border);
+    padding-top: 4px;
+  }
+  .options summary {
+    list-style: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 44px;
+    color: var(--muted);
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .options summary::-webkit-details-marker { display: none; }
+  .options summary::after { content: '▸'; font-size: 12px; }
+  .options[open] summary::after { content: '▾'; }
+  .check-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 14px 0 6px;
+    color: var(--text);
+    font-size: 15px;
+  }
+  .check-row input[type=checkbox] {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
   }
   .spawn-btn {
     width: 100%;
@@ -223,6 +294,49 @@
       </div>
       <label for="name">Name</label>
       <input id="name" type="text" placeholder="session name" autocapitalize="off" autocorrect="off" spellcheck="false">
+
+      <details id="spawn-options" class="options">
+        <summary><span id="options-label">Options</span></summary>
+
+        <label class="check-row">
+          <input id="worktree" type="checkbox" checked>
+          <span>Isolate in a git worktree</span>
+        </label>
+
+        <label for="model">Model</label>
+        <select id="model">
+          <option value="">Default</option>
+          <option value="sonnet">Sonnet</option>
+          <option value="opus">Opus</option>
+          <option value="fable">Fable</option>
+          <option value="haiku">Haiku</option>
+        </select>
+
+        <label for="effort">Effort</label>
+        <select id="effort">
+          <option value="">Default</option>
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+          <option value="xhigh">XHigh</option>
+          <option value="max">Max</option>
+        </select>
+
+        <label for="permission-mode">Permission mode</label>
+        <select id="permission-mode">
+          <option value="">Default</option>
+          <option value="acceptEdits">Accept edits</option>
+          <option value="auto">Auto</option>
+          <option value="dontAsk">Don't ask</option>
+          <option value="manual">Manual</option>
+          <option value="plan">Plan</option>
+          <option value="bypassPermissions">Bypass permissions</option>
+        </select>
+
+        <label for="prompt">Initial prompt</label>
+        <textarea id="prompt" rows="3" placeholder="optional — sent as the first message" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
+      </details>
+
       <button id="spawn-btn" class="spawn-btn">Spawn Session</button>
     </div>
   </section>
@@ -237,12 +351,52 @@ const cwdInput = document.getElementById('cwd');
 const nameInput = document.getElementById('name');
 const spawnBtn = document.getElementById('spawn-btn');
 const toastEl = document.getElementById('toast');
+const optionsEl = document.getElementById('spawn-options');
+const optionsLabelEl = document.getElementById('options-label');
+const worktreeInput = document.getElementById('worktree');
+const modelInput = document.getElementById('model');
+const effortInput = document.getElementById('effort');
+const permissionModeInput = document.getElementById('permission-mode');
+const promptInput = document.getElementById('prompt');
 
 const FAVORITES_KEY = 'claudio.favorites';
 let allEntries = [];       // flattened {root, dir, path} across all configured roots
 let favorites = new Set(); // full paths the user has starred, populated at init (see bottom of script)
 let currentResults = [];   // entries currently rendered in the fuzzy dropdown
 let highlightedIndex = -1; // keyboard-selected row within currentResults, -1 = none
+let lastSessions = [];     // most recently fetched session list, so a card's expand/collapse toggle can re-render without a round trip
+let expandedIds = new Set(); // session ids with their action row expanded — survives re-render, and pauses the 4s poll (see refreshSessions)
+
+// Spawn options are deliberately NOT persisted (no localStorage): an option
+// that's both sticky and hidden behind a closed <details> is invisible
+// surprise. "Why is everything running on bypassPermissions?" is a bug
+// report filed once and then chased for an hour. Every spawn starts from
+// the documented defaults, and resetSpawnOptions() restores them after
+// each successful spawn.
+function updateOptionsLabel() {
+  let n = 0;
+  if (!worktreeInput.checked) n++; // unchecked is the deviation — worktree defaults ON
+  if (modelInput.value) n++;
+  if (effortInput.value) n++;
+  if (permissionModeInput.value) n++;
+  if (promptInput.value.trim()) n++;
+  optionsLabelEl.textContent = n > 0 ? `Options · ${n}` : 'Options';
+}
+
+function resetSpawnOptions() {
+  worktreeInput.checked = true;
+  modelInput.value = '';
+  effortInput.value = '';
+  permissionModeInput.value = '';
+  promptInput.value = '';
+  optionsEl.open = false;
+  updateOptionsLabel();
+}
+
+[worktreeInput, modelInput, effortInput, permissionModeInput].forEach(field => {
+  field.addEventListener('change', updateOptionsLabel);
+});
+promptInput.addEventListener('input', updateOptionsLabel);
 
 // The page may be served at "/" directly or behind a reverse-proxy path
 // prefix (e.g. tailscale serve --set-path=/claudio strips the prefix before
@@ -464,11 +618,16 @@ cwdInput.addEventListener('keydown', (e) => {
 });
 
 async function refreshSessions() {
+  // A card mid-expansion must survive the poll -- rebuilding the list here
+  // would instantly re-collapse it, which reads as broken. The toggle click
+  // handler re-renders from lastSessions directly, bypassing this guard.
+  if (expandedIds.size > 0) return;
   try {
     const res = await fetch(`${API_BASE}/api/sessions`);
     if (!res.ok) throw new Error('failed to load sessions');
     const sessions = await res.json();
-    renderSessions(sessions || []);
+    lastSessions = sessions || [];
+    renderSessions(lastSessions);
   } catch (e) {
     sessionsEl.textContent = '';
     sessionsEl.appendChild(el('div', 'empty', "Couldn't reach claudio: " + e.message));
@@ -478,6 +637,12 @@ async function refreshSessions() {
 // Builds each session card via DOM APIs (textContent, not innerHTML) so
 // nothing from `claude agents --json` (names, paths) can be interpreted as
 // markup, even though these values only ever come from the local machine.
+//
+// Tapping the card body (not Kill) expands an inline row holding Stop. That
+// beats a swipe or long-press gesture on a list that re-renders on a timer:
+// the whole ~64pt card is the target instead of a small top-right glyph, it
+// teaches itself on the first accidental tap, and it never fights vertical
+// scroll the way a swipe would.
 function renderSessions(sessions) {
   sessionsEl.textContent = '';
   if (!sessions.length) {
@@ -489,21 +654,46 @@ function renderSessions(sessions) {
     const displayName = s.name || s.id || 'unnamed';
 
     const card = el('div', 'session-card');
+    const row = el('div', 'session-row');
 
+    const toggle = el('button', 'session-toggle');
+    toggle.type = 'button';
     const info = el('div', 'session-info');
     info.appendChild(el('div', 'session-name', displayName));
-    info.appendChild(el('div', 'session-cwd', s.cwd || ''));
+    info.appendChild(el('div', 'session-cwd', s.repo || s.cwd || ''));
 
     const meta = el('div', 'session-meta');
     meta.appendChild(el('span', 'badge ' + state, s.status || s.state || 'unknown'));
+    if (s.worktree) meta.appendChild(el('span', 'badge worktree', '⑂ ' + s.worktree));
     meta.appendChild(el('span', null, s.id || ''));
     info.appendChild(meta);
-
-    card.appendChild(info);
+    toggle.appendChild(info);
+    toggle.addEventListener('click', () => {
+      if (expandedIds.has(s.id)) expandedIds.delete(s.id); else expandedIds.add(s.id);
+      renderSessions(lastSessions);
+    });
 
     const killBtn = el('button', 'kill-btn', 'Kill');
-    killBtn.addEventListener('click', () => onKill(killBtn, s.id, displayName));
-    card.appendChild(killBtn);
+    killBtn.addEventListener('click', (e) => {
+      e.stopPropagation(); // otherwise the tap also toggles the card open
+      onKill(killBtn, s.id, displayName);
+    });
+
+    row.appendChild(toggle);
+    row.appendChild(killBtn);
+    card.appendChild(row);
+
+    if (expandedIds.has(s.id)) {
+      const expandRow = el('div', 'expand-row');
+      const stopBtn = el('button', 'stop-btn', 'Stop');
+      stopBtn.type = 'button';
+      stopBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        onStop(stopBtn, s.id, displayName);
+      });
+      expandRow.appendChild(stopBtn);
+      card.appendChild(expandRow);
+    }
 
     sessionsEl.appendChild(card);
   }
@@ -516,7 +706,27 @@ async function onKill(btn, id, name) {
     const res = await fetch(`${API_BASE}/api/sessions/${id}`, { method: 'DELETE' });
     const body = await res.json();
     if (!res.ok) throw new Error(body.error || 'failed to delete');
+    expandedIds.delete(id);
     toast(`Deleted ${name}`);
+    refreshSessions();
+  } catch (err) {
+    toast(err.message);
+    btn.disabled = false;
+  }
+}
+
+// No confirm() here, unlike onKill: stopping is reversible via
+// `claude attach <id>`, so the friction should be lower than a permanent
+// delete. The session drops out of the list afterward (listSessions omits
+// --all — see sessions.go), so the toast carries the resume command.
+async function onStop(btn, id, name) {
+  btn.disabled = true;
+  try {
+    const res = await fetch(`${API_BASE}/api/sessions/${id}/stop`, { method: 'POST' });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || 'failed to stop');
+    expandedIds.delete(id);
+    toast(`Stopped ${name} — resume with claude attach ${id}`);
     refreshSessions();
   } catch (err) {
     toast(err.message);
@@ -579,16 +789,37 @@ spawnBtn.addEventListener('click', async () => {
   spawnBtn.disabled = true;
   spawnBtn.textContent = 'Spawning…';
   try {
+    // Model/effort/permission-mode/prompt are only included when set, so a
+    // blank field is genuinely absent from the request body -- the server
+    // (sessions.go SpawnOptions) omits the matching claude flag entirely and
+    // ~/.claude/settings.json decides, exactly as if this UI didn't exist.
+    // worktree is the one deliberate default-on exception, so it's always
+    // sent explicitly.
+    const payload = { cwd, name, worktree: worktreeInput.checked };
+    if (modelInput.value) payload.model = modelInput.value;
+    if (effortInput.value) payload.effort = effortInput.value;
+    if (permissionModeInput.value) payload.permissionMode = permissionModeInput.value;
+    if (promptInput.value.trim()) payload.prompt = promptInput.value.trim();
+
     const res = await fetch(`${API_BASE}/api/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cwd, name }),
+      body: JSON.stringify(payload),
     });
     const body = await res.json();
     if (!res.ok) throw new Error(body.error || 'failed to spawn');
-    toast(`Launching "${name}"…`);
+
+    if (body.worktree) {
+      toast(`Launching "${name}" in worktree ${body.worktree}…`);
+    } else if (body.worktreeSkipped) {
+      toast(`Launching "${name}" — no worktree (${body.worktreeSkipped})`);
+    } else {
+      toast(`Launching "${name}"…`);
+    }
+
     cwdInput.value = '';
     nameInput.value = '';
+    resetSpawnOptions();
     favoritesRowEl.querySelectorAll('.chip.selected').forEach(c => c.classList.remove('selected'));
     setTimeout(refreshSessions, 1500);
   } catch (err) {
