@@ -282,14 +282,19 @@ function loadFavorites() {
   try {
     const raw = localStorage.getItem(FAVORITES_KEY);
     const arr = raw ? JSON.parse(raw) : [];
-    return new Set(Array.isArray(arr) ? arr : []);
+    return new Set(Array.isArray(arr) ? arr.filter(x => typeof x === 'string') : []);
   } catch (e) {
     return new Set();
   }
 }
 
 function saveFavorites() {
-  localStorage.setItem(FAVORITES_KEY, JSON.stringify([...favorites]));
+  try {
+    localStorage.setItem(FAVORITES_KEY, JSON.stringify([...favorites]));
+  } catch (e) {
+    // persistence is best-effort (quota exceeded, private browsing, etc.);
+    // the in-memory Set still reflects the toggle, so keep going
+  }
 }
 
 function toggleFavorite(path) {
