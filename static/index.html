@@ -223,9 +223,12 @@
   <section>
     <h2>New session</h2>
     <div class="card">
-      <div id="folder-groups"></div>
+      <div id="favorites-row" class="favorites-row"></div>
       <label for="cwd">Folder</label>
-      <input id="cwd" type="text" placeholder="/home/you/git/some-project" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <div class="picker">
+        <input id="cwd" type="text" placeholder="/home/you/git/some-project" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off">
+        <div id="fuzzy-dropdown" class="fuzzy-dropdown"></div>
+      </div>
       <label for="name">Name</label>
       <input id="name" type="text" placeholder="session name" autocapitalize="off" autocorrect="off" spellcheck="false">
       <button id="spawn-btn" class="spawn-btn">Spawn Session</button>
