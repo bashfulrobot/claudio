@@ -587,7 +587,7 @@ spawnBtn.addEventListener('click', async () => {
     toast(`Launching "${name}"…`);
     cwdInput.value = '';
     nameInput.value = '';
-    foldersEl.querySelectorAll('.chip.selected').forEach(c => c.classList.remove('selected'));
+    favoritesRowEl.querySelectorAll('.chip.selected').forEach(c => c.classList.remove('selected'));
     setTimeout(refreshSessions, 1500);
   } catch (err) {
     toast(err.message);
