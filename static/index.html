@@ -395,17 +395,28 @@ function renderDropdown(query) {
     const isFav = favorites.has(entry.path);
     const star = el('button', 'fuzzy-star' + (isFav ? ' active' : ''), isFav ? '★' : '☆');
     star.type = 'button';
-    star.addEventListener('mousedown', (e) => {
-      e.preventDefault(); // don't let the input blur before the click registers
+    const activateStar = (e) => {
+      // preventDefault on mousedown cancels the browser's default
+      // "move focus to target" action for THIS interaction, so #cwd never
+      // blurs in the first place when a star/row is tapped directly — no
+      // race with Task 6's blur handler for this path. touchstart needs
+      // its own preventDefault: on iOS Safari a touchstart can blur the
+      // focused input before the synthesized mousedown fires, so relying
+      // on mousedown alone silently drops taps on that browser.
+      e.preventDefault();
       toggleFavorite(entry.path);
       renderDropdown(cwdInput.value.trim());
-    });
+    };
+    star.addEventListener('mousedown', activateStar);
+    star.addEventListener('touchstart', activateStar);
 
-    row.addEventListener('mousedown', (e) => {
+    const activateRow = (e) => {
       if (e.target === star) return;
       e.preventDefault();
       selectEntry(entry, null);
-    });
+    };
+    row.addEventListener('mousedown', activateRow);
+    row.addEventListener('touchstart', activateRow);
 
     row.appendChild(name);
     row.appendChild(star);
