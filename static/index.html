@@ -178,6 +178,7 @@
   }
   .badge.busy, .badge.working { background: #4a3b00; color: #ffd54a; }
   .badge.idle, .badge.done { background: #0e3d1d; color: #5fe38a; }
+  .badge.blocked, .badge.waiting { background: #4a0e12; color: #ff6b6b; }
   .badge.worktree { background: var(--card-elevated); color: var(--muted); }
   .session-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .session-toggle {
@@ -219,6 +220,36 @@
     font-weight: 600;
   }
   .stop-btn:active { opacity: 0.7; }
+  .output-panel {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .pending-box {
+    background: #2a0e10;
+    border: 1px solid #5a1a1a;
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    color: #ff9b9b;
+  }
+  .pending-box .pending-detail { color: var(--muted); margin-top: 4px; }
+  .remote-control-link {
+    display: inline-block;
+    margin-bottom: 10px;
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 600;
+  }
+  .output-event {
+    color: var(--muted);
+    margin-bottom: 6px;
+    line-height: 1.4;
+  }
+  .output-event .role { color: var(--text); font-weight: 600; }
+  .output-event .pending-tag { color: #ff9b9b; }
+  .output-loading, .output-error, .output-empty { color: var(--muted); }
   .empty {
     color: var(--muted);
     text-align: center;
@@ -470,6 +501,7 @@ let currentResults = [];   // entries currently rendered in the fuzzy dropdown
 let highlightedIndex = -1; // keyboard-selected row within currentResults, -1 = none
 let lastSessions = [];     // most recently fetched session list, so a card's expand/collapse toggle can re-render without a round trip
 let expandedIds = new Set(); // session ids with their action row expanded — survives re-render, and pauses the 4s poll (see refreshSessions)
+let outputCache = new Map(); // session id -> {loading} | {error} | {data: SessionOutput} for the expanded output panel
 
 // Spawn options are deliberately NOT persisted (no localStorage): an option
 // that's both sticky and hidden behind a closed <details> is invisible
@@ -826,12 +858,15 @@ function renderSessions(sessions) {
 
     const meta = el('div', 'session-meta');
     meta.appendChild(el('span', 'badge ' + state, s.status || s.state || 'unknown'));
+    if (s.waitingFor) meta.appendChild(el('span', 'badge blocked', s.waitingFor));
     if (s.worktree) meta.appendChild(el('span', 'badge worktree', '⑂ ' + s.worktree));
     meta.appendChild(el('span', null, s.id || ''));
     info.appendChild(meta);
     toggle.appendChild(info);
     toggle.addEventListener('click', () => {
-      if (expandedIds.has(s.id)) expandedIds.delete(s.id); else expandedIds.add(s.id);
+      const opening = !expandedIds.has(s.id);
+      if (opening) expandedIds.add(s.id); else expandedIds.delete(s.id);
+      if (opening && !outputCache.has(s.id)) loadOutput(s.id);
       renderSessions(lastSessions);
     });
 
@@ -855,10 +890,81 @@ function renderSessions(sessions) {
       });
       expandRow.appendChild(stopBtn);
       card.appendChild(expandRow);
+      card.appendChild(renderOutputPanel(s));
     }
 
     sessionsEl.appendChild(card);
   }
+}
+
+// Renders whatever's currently cached for s.id -- loading/error/data -- so
+// expanding a card is instant even before its /output fetch resolves, and a
+// re-render triggered by another card's toggle doesn't re-fetch. The "needs
+// your input" box and the Remote Control link don't depend on the fetch at
+// all (waitingFor already comes from the plain session list), so they show
+// immediately even if the transcript read is slow or fails.
+function renderOutputPanel(s) {
+  const panel = el('div', 'output-panel');
+  const cached = outputCache.get(s.id);
+
+  if (s.waitingFor) {
+    const box = el('div', 'pending-box');
+    box.appendChild(el('div', null, '⚠ Needs your input — ' + s.waitingFor));
+    const pending = cached?.data?.pendingToolUse;
+    if (pending) {
+      const label = pending.toolName + (pending.detail ? ': ' + pending.detail : '');
+      box.appendChild(el('div', 'pending-detail', label));
+    }
+    panel.appendChild(box);
+  }
+
+  // claudio always spawns with --remote-control, so every session can
+  // already be attached to and answered from claude.ai/code or the iOS
+  // app -- this is the supported way to actually resolve a permission
+  // prompt remotely; claudio only displays it.
+  const rcLink = el('a', 'remote-control-link', 'Open in Remote Control ↗');
+  rcLink.href = 'https://claude.ai/code';
+  rcLink.target = '_blank';
+  rcLink.rel = 'noopener';
+  rcLink.addEventListener('click', (e) => e.stopPropagation());
+  panel.appendChild(rcLink);
+
+  if (!cached || cached.loading) {
+    panel.appendChild(el('div', 'output-loading', 'Loading recent output…'));
+  } else if (cached.error) {
+    panel.appendChild(el('div', 'output-error', cached.error));
+  } else {
+    const events = cached.data.events || [];
+    if (!events.length) {
+      panel.appendChild(el('div', 'output-empty', 'No recent activity'));
+    } else {
+      for (const ev of events) {
+        const row = el('div', 'output-event');
+        row.appendChild(el('span', 'role', ev.role === 'assistant' ? 'Claude' : 'You'));
+        const label = ev.toolName ? ev.toolName + (ev.detail ? ': ' + ev.detail : '') : ev.text;
+        row.appendChild(document.createTextNode(' ' + (label || '')));
+        if (ev.toolName && !ev.resolved) row.appendChild(el('span', 'pending-tag', ' (pending)'));
+        panel.appendChild(row);
+      }
+    }
+  }
+  return panel;
+}
+
+async function loadOutput(id) {
+  outputCache.set(id, { loading: true });
+  try {
+    const res = await fetch(`${API_BASE}/api/sessions/${id}/output`);
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || 'failed to load output');
+    outputCache.set(id, { data: body });
+  } catch (err) {
+    outputCache.set(id, { error: err.message });
+  }
+  // Only re-render if the card is still expanded -- the user may have
+  // collapsed it (or collapsed and re-expanded a different one) while the
+  // fetch was in flight.
+  if (expandedIds.has(id)) renderSessions(lastSessions);
 }
 
 async function onKill(btn, id, name) {
@@ -869,6 +975,7 @@ async function onKill(btn, id, name) {
     const body = await res.json();
     if (!res.ok) throw new Error(body.error || 'failed to delete');
     expandedIds.delete(id);
+    outputCache.delete(id);
     toast(`Deleted ${name}`);
     refreshSessions();
   } catch (err) {
@@ -888,6 +995,7 @@ async function onStop(btn, id, name) {
     const body = await res.json();
     if (!res.ok) throw new Error(body.error || 'failed to stop');
     expandedIds.delete(id);
+    outputCache.delete(id);
     toast(`Stopped ${name} — resume with claude attach ${id}`);
     refreshSessions();
   } catch (err) {

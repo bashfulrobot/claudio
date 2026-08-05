@@ -106,11 +106,14 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 
 // handleSessionByID serves two routes under one prefix registration:
 //
-//	DELETE /api/sessions/{id}       permanently remove (id is the short "id"
-//	                                field from `claude agents --json`, e.g.
-//	                                "5aad2c1c" -- not a pid)
-//	POST   /api/sessions/{id}/stop  stop but keep the conversation, resumable
-//	                                later via `claude attach <id>`
+//	DELETE /api/sessions/{id}        permanently remove (id is the short "id"
+//	                                 field from `claude agents --json`, e.g.
+//	                                 "5aad2c1c" -- not a pid)
+//	POST   /api/sessions/{id}/stop   stop but keep the conversation, resumable
+//	                                 later via `claude attach <id>`
+//	GET    /api/sessions/{id}/output recent transcript activity + any tool
+//	                                 call still awaiting a result (see
+//	                                 SessionOutput in transcript.go)
 //
 // Both share one "/api/sessions/" prefix handler (see routes()) rather than
 // Go 1.22 method-scoped patterns: the catch-all file server mounted at "/"
@@ -147,6 +150,34 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "stopped"})
+
+	case len(parts) == 2 && parts[1] == "output":
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		sessions, err := listSessions(s.claudeBin)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		var target *Session
+		for i := range sessions {
+			if sessions[i].ID == parts[0] {
+				target = &sessions[i]
+				break
+			}
+		}
+		if target == nil {
+			writeError(w, http.StatusNotFound, "no known claude session with that id")
+			return
+		}
+		out, err := readSessionOutput(target.Cwd, target.SessionID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, out)
 
 	default:
 		writeError(w, http.StatusNotFound, "not found")

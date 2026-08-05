@@ -58,6 +58,12 @@ type Session struct {
 	Name      string `json:"name"`
 	Status    string `json:"status"`
 	State     string `json:"state"`
+	// WaitingFor is only set when State is "blocked" (or Status is
+	// "waiting") -- a short human-readable reason from claude's own status
+	// classifier, e.g. "permission prompt". Confirmed live against
+	// `claude agents --json` for a session paused on a Bash permission
+	// prompt; not documented, so treat the exact string as best-effort.
+	WaitingFor string `json:"waitingFor,omitempty"`
 
 	// Repo and Worktree do NOT come from `claude agents --json` -- they're
 	// derived by splitting Cwd on the "/.claude/worktrees/" convention
