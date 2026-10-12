@@ -12,6 +12,10 @@ import (
 //go:embed static
 var staticFS embed.FS
 
+// maxBodyBytes caps every JSON request body. The largest legitimate one is a
+// spawn with a 4000-byte prompt or a bulk call with 50 short ids.
+const maxBodyBytes = 64 << 10
+
 type Server struct {
 	claudeBin string
 	gitBin    string
@@ -77,6 +81,7 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 			Prompt         string `json:"prompt"`
 			Worktree       *bool  `json:"worktree"`
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request body")
 			return
@@ -117,6 +122,8 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 //	                                 "5aad2c1c" -- not a pid)
 //	POST   /api/sessions/{id}/stop   stop but keep the conversation, resumable
 //	                                 later via `claude attach <id>`
+//	POST   /api/sessions/{id}/resume restart a disconnected session
+//	POST   /api/sessions/bulk        remove or resume many (see handleBulk)
 //	GET    /api/sessions/{id}/output recent transcript activity + any tool
 //	                                 call still awaiting a result (see
 //	                                 SessionOutput in transcript.go)
@@ -135,6 +142,9 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(rest, "/")
 
 	switch {
+	case len(parts) == 1 && parts[0] == "bulk":
+		s.handleBulk(w, r)
+
 	case len(parts) == 1:
 		if r.Method != http.MethodDelete {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -156,6 +166,17 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "stopped"})
+
+	case len(parts) == 2 && parts[1] == "resume":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if err := resumeSession(s.claudeBin, parts[0]); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "resumed"})
 
 	case len(parts) == 2 && parts[1] == "output":
 		if r.Method != http.MethodGet {
@@ -188,6 +209,32 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusNotFound, "not found")
 	}
+}
+
+// POST /api/sessions/bulk  {"action": "remove"|"resume", "ids": ["5aad2c1c", ...]}
+// -> {"results": [{"id", "ok", "error"?}, ...]}, one entry per distinct id.
+func (s *Server) handleBulk(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var body struct {
+		Action string   `json:"action"`
+		IDs    []string `json:"ids"`
+	}
+	// Bound the body before decoding: the maxBulkIDs cap in bulkAction only
+	// applies after the whole ids array is already in memory.
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	results, err := bulkAction(s.claudeBin, body.Action, body.IDs)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"results": results})
 }
 
 // GET /api/folders

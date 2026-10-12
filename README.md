@@ -75,10 +75,12 @@ phone without exposing it to the whole LAN.
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/sessions` | List running sessions (`claude agents --json`) |
+| `GET` | `/api/sessions` | List all sessions (`claude agents --json --all`); `disconnected: true` marks ones with no process |
 | `POST` | `/api/sessions` | Spawn a session — see body below |
 | `POST` | `/api/sessions/{id}/stop` | Stop a session, keeping its conversation (`claude stop <id>`) |
+| `POST` | `/api/sessions/{id}/resume` | Restart a disconnected session under the same id (`claude respawn <id>`) |
 | `DELETE` | `/api/sessions/{id}` | Permanently delete a session and its worktree (`claude rm <id>`) |
+| `POST` | `/api/sessions/bulk` | `{"action":"remove"\|"resume","ids":[…]}` (max 50); returns one result per id, so a refused delete does not hide the others |
 | `GET` | `/api/folders` | List immediate subdirectories of the configured roots |
 
 `POST /api/sessions` body:

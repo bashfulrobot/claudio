@@ -180,6 +180,75 @@
   .badge.idle, .badge.done { background: #0e3d1d; color: #5fe38a; }
   .badge.blocked, .badge.waiting { background: #4a0e12; color: #ff6b6b; }
   .badge.worktree { background: var(--card-elevated); color: var(--muted); }
+  .badge.stopped { background: var(--card-elevated); color: var(--muted); }
+  .section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .section-head h2 { margin: 0 0 0 4px; }
+  .link-btn {
+    background: none;
+    border: none;
+    color: var(--accent);
+    font-size: 16px;
+    font-weight: 600;
+    min-height: 44px;
+    padding: 0 8px;
+  }
+  .link-btn:active { opacity: 0.7; }
+  .card-actions { display: flex; gap: 10px; margin-top: 12px; }
+  .card-actions button, .bulk-actions button {
+    min-height: 44px;
+    border: none;
+    border-radius: 10px;
+    font-size: 16px;
+    font-weight: 600;
+    color: white;
+    touch-action: manipulation;
+  }
+  .card-actions button:active, .bulk-actions button:active { opacity: 0.7; }
+  .card-actions button:disabled, .bulk-actions button:disabled { opacity: 0.4; }
+  /* Resume gets twice the width and the accent fill. Delete is a quiet
+     tinted button so a thumb aimed at Resume cannot land on a loud red
+     target; the confirm dialog is the second guard. */
+  .card-actions .resume-btn, .bulk-actions .resume-btn { flex: 2; background: var(--accent); }
+  .card-actions .delete-btn, .bulk-actions .delete-btn { flex: 1; background: var(--card-elevated); color: var(--danger); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .select-dot {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 2px solid var(--muted);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 16px;
+    line-height: 1;
+  }
+  .select-dot.on { background: var(--accent); border-color: var(--accent); }
+  .session-card.selected { border-color: var(--accent); background: #12263d; }
+  body.selecting .session-card { -webkit-user-select: none; user-select: none; }
+  /* Room for the fixed bulk bar so the last card is never hidden behind it. */
+  body.selecting main { padding-bottom: calc(150px + env(safe-area-inset-bottom)); }
+  body.selecting .toast { bottom: calc(env(safe-area-inset-bottom) + 140px); }
+  .bulk-bar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 8;
+    display: none;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px max(16px, env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+    background: var(--card-elevated);
+    border-top: 1px solid var(--border);
+  }
+  .bulk-bar.show { display: flex; }
+  .bulk-top { display: flex; align-items: center; justify-content: space-between; }
+  .bulk-top .link-btn { min-width: 64px; padding: 0; }
+  .bulk-top .link-btn:last-child { text-align: right; }
+  .bulk-count { font-size: 15px; font-weight: 600; }
+  .bulk-actions { display: flex; gap: 10px; }
   .session-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .session-toggle {
     min-width: 0;
@@ -408,7 +477,25 @@
       <div class="empty">Loading…</div>
     </div>
   </section>
+  <section id="disconnected-section" hidden>
+    <div class="section-head">
+      <h2>Disconnected <span id="disc-count"></span></h2>
+      <button id="select-btn" class="link-btn" type="button">Select</button>
+    </div>
+    <div id="disconnected" class="card-list"></div>
+  </section>
 </main>
+<div id="bulk-bar" class="bulk-bar" role="toolbar" aria-label="Bulk actions">
+  <div class="bulk-top">
+    <button id="bulk-cancel" class="link-btn" type="button">Cancel</button>
+    <span id="bulk-count" class="bulk-count" aria-live="polite">0 selected</span>
+    <button id="bulk-all" class="link-btn" type="button">All</button>
+  </div>
+  <div class="bulk-actions">
+    <button id="bulk-resume" class="resume-btn" type="button">Resume</button>
+    <button id="bulk-delete" class="delete-btn" type="button">Delete</button>
+  </div>
+</div>
 <div id="toast" class="toast"></div>
 
 <div id="modal-backdrop" class="modal-backdrop">
@@ -474,6 +561,16 @@
 
 <script>
 const sessionsEl = document.getElementById('sessions');
+const disconnectedEl = document.getElementById('disconnected');
+const disconnectedSectionEl = document.getElementById('disconnected-section');
+const discCountEl = document.getElementById('disc-count');
+const selectBtnEl = document.getElementById('select-btn');
+const bulkBarEl = document.getElementById('bulk-bar');
+const bulkCountEl = document.getElementById('bulk-count');
+const bulkAllEl = document.getElementById('bulk-all');
+const bulkCancelEl = document.getElementById('bulk-cancel');
+const bulkResumeEl = document.getElementById('bulk-resume');
+const bulkDeleteEl = document.getElementById('bulk-delete');
 const favBtnEl = document.getElementById('fav-btn');
 const favPickerEl = document.getElementById('fav-picker');
 const favDropdownEl = document.getElementById('fav-dropdown');
@@ -501,6 +598,9 @@ let currentResults = [];   // entries currently rendered in the fuzzy dropdown
 let highlightedIndex = -1; // keyboard-selected row within currentResults, -1 = none
 let lastSessions = [];     // most recently fetched session list, so a card's expand/collapse toggle can re-render without a round trip
 let expandedIds = new Set(); // session ids with their action row expanded — survives re-render, and pauses the 4s poll (see refreshSessions)
+let selectMode = false;      // Disconnected list shows checkboxes and the bulk bar
+let selectedIds = new Set(); // disconnected session ids ticked in select mode
+let bulkBusy = false;        // a bulk request is in flight; buttons stay disabled
 let outputCache = new Map(); // session id -> {loading} | {error} | {data: SessionOutput} for the expanded output panel
 
 // Spawn options are deliberately NOT persisted (no localStorage): an option
@@ -838,49 +938,107 @@ async function refreshSessions() {
 // teaches itself on the first accidental tap, and it never fights vertical
 // scroll the way a swipe would.
 function renderSessions(sessions) {
+  const running = sessions.filter((s) => !s.disconnected);
+  const disconnected = sessions.filter((s) => s.disconnected);
+
+  // Drop ticks for sessions that vanished since the last poll so the bulk
+  // bar never counts or acts on ids that no longer exist.
+  const liveIds = new Set(disconnected.map((s) => s.id));
+  for (const id of [...selectedIds]) if (!liveIds.has(id)) selectedIds.delete(id);
+  if (!disconnected.length) selectMode = false;
+
   sessionsEl.textContent = '';
-  if (!sessions.length) {
+  if (!running.length) {
     sessionsEl.appendChild(el('div', 'empty', 'No sessions running'));
-    return;
   }
-  for (const s of sessions) {
-    const state = (s.state || s.status || '').toLowerCase();
-    const displayName = s.name || s.id || 'unnamed';
+  for (const s of running) sessionsEl.appendChild(buildCard(s));
 
-    const card = el('div', 'session-card');
-    const row = el('div', 'session-row');
+  disconnectedEl.textContent = '';
+  disconnectedSectionEl.hidden = !disconnected.length;
+  discCountEl.textContent = disconnected.length ? '(' + disconnected.length + ')' : '';
+  selectBtnEl.textContent = selectMode ? 'Cancel' : 'Select';
+  for (const s of disconnected) disconnectedEl.appendChild(buildCard(s));
+  renderBulkBar(disconnected);
+}
 
-    const toggle = el('button', 'session-toggle');
-    toggle.type = 'button';
-    const info = el('div', 'session-info');
-    info.appendChild(el('div', 'session-name', displayName));
-    info.appendChild(el('div', 'session-cwd', s.repo || s.cwd || ''));
+function renderBulkBar(disconnected) {
+  bulkBarEl.classList.toggle('show', selectMode);
+  document.body.classList.toggle('selecting', selectMode);
+  bulkCountEl.textContent = selectedIds.size + ' selected';
+  const none = selectedIds.size === 0 || bulkBusy;
+  bulkResumeEl.disabled = none;
+  bulkDeleteEl.disabled = none;
+  bulkAllEl.textContent = selectedIds.size === disconnected.length ? 'None' : 'All';
+}
 
-    const meta = el('div', 'session-meta');
-    meta.appendChild(el('span', 'badge ' + state, s.status || s.state || 'unknown'));
-    if (s.waitingFor) meta.appendChild(el('span', 'badge blocked', s.waitingFor));
-    if (s.worktree) meta.appendChild(el('span', 'badge worktree', '⑂ ' + s.worktree));
-    meta.appendChild(el('span', null, s.id || ''));
-    info.appendChild(meta);
-    toggle.appendChild(info);
+function buildCard(s) {
+  const state = (s.state || s.status || '').toLowerCase();
+  const displayName = s.name || s.id || 'unnamed';
+  const selected = selectMode && s.disconnected && selectedIds.has(s.id);
+
+  const card = el('div', 'session-card' + (selected ? ' selected' : ''));
+  if (selectMode && s.disconnected) card.setAttribute('aria-selected', selected ? 'true' : 'false');
+  const row = el('div', 'session-row');
+
+  const toggle = el('button', 'session-toggle');
+  toggle.type = 'button';
+  const info = el('div', 'session-info');
+  info.appendChild(el('div', 'session-name', displayName));
+  info.appendChild(el('div', 'session-cwd', s.repo || s.cwd || ''));
+
+  const meta = el('div', 'session-meta');
+  meta.appendChild(el('span', 'badge ' + state, s.disconnected ? (s.state || 'stopped') : (s.status || s.state || 'unknown')));
+  if (s.waitingFor) meta.appendChild(el('span', 'badge blocked', s.waitingFor));
+  if (s.worktree) meta.appendChild(el('span', 'badge worktree', '⑂ ' + s.worktree));
+  meta.appendChild(el('span', null, s.id || ''));
+  info.appendChild(meta);
+  toggle.appendChild(info);
+
+  if (selectMode && s.disconnected) {
+    // In select mode a tap on the card ticks it; expanding output is off.
+    row.appendChild(el('div', 'select-dot' + (selected ? ' on' : ''), selected ? '✓' : ''));
+    toggle.addEventListener('click', () => {
+      if (selectedIds.has(s.id)) selectedIds.delete(s.id); else selectedIds.add(s.id);
+      renderSessions(lastSessions);
+    });
+  } else {
     toggle.addEventListener('click', () => {
       const opening = !expandedIds.has(s.id);
       if (opening) expandedIds.add(s.id); else expandedIds.delete(s.id);
       if (opening && !outputCache.has(s.id)) loadOutput(s.id);
       renderSessions(lastSessions);
     });
+  }
+  row.appendChild(toggle);
 
+  if (!s.disconnected) {
     const killBtn = el('button', 'kill-btn', 'Kill');
     killBtn.addEventListener('click', (e) => {
       e.stopPropagation(); // otherwise the tap also toggles the card open
       onKill(killBtn, s.id, displayName);
     });
-
-    row.appendChild(toggle);
     row.appendChild(killBtn);
-    card.appendChild(row);
+  }
+  card.appendChild(row);
 
-    if (expandedIds.has(s.id)) {
+  // Disconnected cards carry their two actions in plain view: a 44pt
+  // Resume/Delete pair beats tap-to-reveal when the whole point is clearing
+  // several of them quickly from a phone.
+  if (s.disconnected && !selectMode) {
+    const actions = el('div', 'card-actions');
+    const resumeBtn = el('button', 'resume-btn', 'Resume');
+    resumeBtn.type = 'button';
+    resumeBtn.addEventListener('click', () => onResume(resumeBtn, s.id, displayName));
+    const deleteBtn = el('button', 'delete-btn', 'Delete');
+    deleteBtn.type = 'button';
+    deleteBtn.addEventListener('click', () => onKill(deleteBtn, s.id, displayName));
+    actions.appendChild(resumeBtn);
+    actions.appendChild(deleteBtn);
+    card.appendChild(actions);
+  }
+
+  if (expandedIds.has(s.id)) {
+    if (!s.disconnected) {
       const expandRow = el('div', 'expand-row');
       const stopBtn = el('button', 'stop-btn', 'Stop');
       stopBtn.type = 'button';
@@ -890,11 +1048,10 @@ function renderSessions(sessions) {
       });
       expandRow.appendChild(stopBtn);
       card.appendChild(expandRow);
-      card.appendChild(renderOutputPanel(s));
     }
-
-    sessionsEl.appendChild(card);
+    card.appendChild(renderOutputPanel(s));
   }
+  return card;
 }
 
 // Renders whatever's currently cached for s.id -- loading/error/data -- so
@@ -986,8 +1143,8 @@ async function onKill(btn, id, name) {
 
 // No confirm() here, unlike onKill: stopping is reversible via
 // `claude attach <id>`, so the friction should be lower than a permanent
-// delete. The session drops out of the list afterward (listSessions omits
-// --all — see sessions.go), so the toast carries the resume command.
+// delete. The session moves to the Disconnected list, where Resume brings
+// it back.
 async function onStop(btn, id, name) {
   btn.disabled = true;
   try {
@@ -996,13 +1153,84 @@ async function onStop(btn, id, name) {
     if (!res.ok) throw new Error(body.error || 'failed to stop');
     expandedIds.delete(id);
     outputCache.delete(id);
-    toast(`Stopped ${name} — resume with claude attach ${id}`);
+    toast(`Stopped ${name}`);
     refreshSessions();
   } catch (err) {
     toast(err.message);
     btn.disabled = false;
   }
 }
+
+async function onResume(btn, id, name) {
+  btn.disabled = true;
+  try {
+    const res = await fetch(`${API_BASE}/api/sessions/${id}/resume`, { method: 'POST' });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || 'failed to resume');
+    outputCache.delete(id);
+    toast(`Resumed ${name}`);
+    refreshSessions();
+  } catch (err) {
+    toast(err.message);
+    btn.disabled = false;
+  }
+}
+
+// One request for the whole selection; the server reports each id on its own,
+// because `claude rm` can refuse a single session (unpushed commits) while
+// the rest go through. Refused ones stay listed and ticked so a retry or a
+// terminal fix is one tap away.
+async function onBulk(action) {
+  const ids = [...selectedIds];
+  if (!ids.length || bulkBusy) return;
+  if (action === 'remove' && !confirm(`Delete ${ids.length} session${ids.length === 1 ? '' : 's'}?`)) return;
+  bulkBusy = true;
+  renderBulkBar(lastSessions.filter((s) => s.disconnected));
+  try {
+    const res = await fetch(`${API_BASE}/api/sessions/bulk`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, ids }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || 'bulk request failed');
+    const failed = body.results.filter((r) => !r.ok);
+    const done = body.results.length - failed.length;
+    for (const r of body.results) {
+      if (r.ok) { selectedIds.delete(r.id); outputCache.delete(r.id); }
+    }
+    const verb = action === 'remove' ? 'Deleted' : 'Resumed';
+    let msg = `${verb} ${done}`;
+    if (failed.length) msg += `, ${failed.length} failed: ${failed[0].error.slice(0, 120)}`;
+    toast(msg);
+    if (!selectedIds.size) selectMode = false;
+  } catch (err) {
+    toast(err.message);
+  }
+  bulkBusy = false;
+  expandedIds.clear(); // refreshSessions skips while a card is expanded
+  refreshSessions();
+}
+
+selectBtnEl.addEventListener('click', () => {
+  selectMode = !selectMode;
+  if (!selectMode) selectedIds.clear();
+  expandedIds.clear();
+  renderSessions(lastSessions);
+});
+bulkCancelEl.addEventListener('click', () => {
+  selectMode = false;
+  selectedIds.clear();
+  renderSessions(lastSessions);
+});
+bulkAllEl.addEventListener('click', () => {
+  const disconnected = lastSessions.filter((s) => s.disconnected);
+  if (selectedIds.size === disconnected.length) selectedIds.clear();
+  else for (const s of disconnected) selectedIds.add(s.id);
+  renderSessions(lastSessions);
+});
+bulkResumeEl.addEventListener('click', () => onBulk('resume'));
+bulkDeleteEl.addEventListener('click', () => onBulk('remove'));
 
 async function loadFolders() {
   try {

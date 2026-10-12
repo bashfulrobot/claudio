@@ -73,6 +73,11 @@ type Session struct {
 	// controls and could change, so nothing here may branch on it.
 	Repo     string `json:"repo,omitempty"`
 	Worktree string `json:"worktree,omitempty"`
+
+	// Disconnected is true when no process backs the session (PID is 0):
+	// stopped, finished, or orphaned by a supervisor restart. The
+	// conversation is still on disk, so it can be resumed or deleted.
+	Disconnected bool `json:"disconnected"`
 }
 
 // SpawnOptions are the optional per-session overrides the web UI's
@@ -177,20 +182,18 @@ func splitWorktreeCwd(cwd string) (repo, worktree string, ok bool) {
 	return repo, worktree, true
 }
 
-// listSessions shells out to `claude agents --json`, which lists every
-// interactive and background Claude Code session currently running for
-// this user (no TTY required).
+// listSessions shells out to `claude agents --json --all`, which lists every
+// interactive and background Claude Code session for this user (no TTY
+// required), including stopped and finished ones. Callers tell running from
+// disconnected sessions with Session.Disconnected.
 func listSessions(claudeBin string) ([]Session, error) {
-	// Deliberately omit --all: that flag also returns completed background
-	// sessions, which would leave killed sessions lingering in the "Running"
-	// list. Default --json is already scoped to active sessions only.
-	cmd := exec.Command(claudeBin, "agents", "--json")
+	cmd := exec.Command(claudeBin, "agents", "--json", "--all")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("claude agents --json: %w (stderr: %s)", err, stderr.String())
+		return nil, fmt.Errorf("claude agents --json --all: %w (stderr: %s)", err, stderr.String())
 	}
 
 	var sessions []Session
@@ -199,6 +202,7 @@ func listSessions(claudeBin string) ([]Session, error) {
 	}
 
 	for i := range sessions {
+		sessions[i].Disconnected = sessions[i].PID == 0
 		if repo, wt, ok := splitWorktreeCwd(sessions[i].Cwd); ok {
 			sessions[i].Repo = repo
 			sessions[i].Worktree = wt
@@ -323,6 +327,22 @@ func spawnSession(claudeBin, gitBin, cwd, name string, opts SpawnOptions) (Spawn
 	return res, nil
 }
 
+// findSession returns the listed session with the given short id. Every
+// per-session command checks it first, so only ids claude itself reported
+// ever reach an argv.
+func findSession(claudeBin, id string) (Session, error) {
+	sessions, err := listSessions(claudeBin)
+	if err != nil {
+		return Session{}, err
+	}
+	for _, s := range sessions {
+		if s.ID == id {
+			return s, nil
+		}
+	}
+	return Session{}, fmt.Errorf("no known claude session with id %q", id)
+}
+
 // killSession permanently deletes the background session identified by id
 // (the short `id` field from `claude agents --json`, not its pid), including
 // its worktree if it has one.
@@ -339,20 +359,8 @@ func spawnSession(claudeBin, gitBin, cwd, name string, opts SpawnOptions) (Spawn
 // immediate pty-host parent were each silently undone by a respawn. `rm`
 // is the actual sanctioned way to make a session go away for good.
 func killSession(claudeBin string, id string) error {
-	sessions, err := listSessions(claudeBin)
-	if err != nil {
+	if _, err := findSession(claudeBin, id); err != nil {
 		return err
-	}
-
-	found := false
-	for _, s := range sessions {
-		if s.ID == id {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return fmt.Errorf("no known claude session with id %q", id)
 	}
 
 	var stderr bytes.Buffer
@@ -367,24 +375,10 @@ func killSession(claudeBin string, id string) error {
 // stopSession stops the background session identified by id, keeping its
 // conversation intact so it can be resumed later with `claude attach <id>`.
 // Unlike killSession/`claude rm`, this does NOT delete the session's
-// worktree, and the session drops out of listSessions' output afterward
-// (claude agents --json without --all only reports active sessions -- see
-// the comment there).
+// worktree, and the session stays listed as disconnected afterward.
 func stopSession(claudeBin string, id string) error {
-	sessions, err := listSessions(claudeBin)
-	if err != nil {
+	if _, err := findSession(claudeBin, id); err != nil {
 		return err
-	}
-
-	found := false
-	for _, s := range sessions {
-		if s.ID == id {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return fmt.Errorf("no known claude session with id %q", id)
 	}
 
 	var stderr bytes.Buffer
@@ -394,4 +388,74 @@ func stopSession(claudeBin string, id string) error {
 		return fmt.Errorf("claude stop %s: %w (stderr: %s)", id, err, stderr.String())
 	}
 	return nil
+}
+
+// resumeSession restarts a disconnected session under the same id with
+// `claude respawn <id>`, which reopens its saved conversation. Already
+// running sessions are refused so a double tap cannot restart live work.
+func resumeSession(claudeBin string, id string) error {
+	s, err := findSession(claudeBin, id)
+	if err != nil {
+		return err
+	}
+	if !s.Disconnected {
+		return fmt.Errorf("session %q is already running", id)
+	}
+
+	var stderr bytes.Buffer
+	cmd := exec.Command(claudeBin, "respawn", id)
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("claude respawn %s: %w (stderr: %s)", id, err, strings.TrimSpace(stderr.String()))
+	}
+	return nil
+}
+
+// maxBulkIDs bounds one bulk request: each id costs a `claude` subprocess.
+const maxBulkIDs = 50
+
+// BulkResult is the per-session outcome of a bulk action. One failure, such
+// as `claude rm` refusing to drop a worktree with unpushed commits, must not
+// hide the others, so errors are reported per id.
+type BulkResult struct {
+	ID    string `json:"id"`
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+// bulkAction applies "remove" or "resume" to each id in turn. Sequential on
+// purpose: `claude rm` and `respawn` both go through one supervisor, and a
+// predictable order keeps the failure messages attributable.
+func bulkAction(claudeBin, action string, ids []string) ([]BulkResult, error) {
+	var run func(string, string) error
+	switch action {
+	case "remove":
+		run = killSession
+	case "resume":
+		run = resumeSession
+	default:
+		return nil, fmt.Errorf("unknown bulk action %q", action)
+	}
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("no session ids given")
+	}
+	if len(ids) > maxBulkIDs {
+		return nil, fmt.Errorf("too many sessions (max %d)", maxBulkIDs)
+	}
+
+	seen := make(map[string]bool, len(ids))
+	results := make([]BulkResult, 0, len(ids))
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		r := BulkResult{ID: id, OK: true}
+		if err := run(claudeBin, id); err != nil {
+			r.OK = false
+			r.Error = err.Error()
+		}
+		results = append(results, r)
+	}
+	return results, nil
 }
