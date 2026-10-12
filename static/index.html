@@ -194,19 +194,23 @@
   }
   .link-btn:active { opacity: 0.7; }
   .card-actions { display: flex; gap: 10px; margin-top: 12px; }
-  .card-actions button {
-    flex: 1;
+  .card-actions button, .bulk-actions button {
     min-height: 44px;
     border: none;
     border-radius: 10px;
     font-size: 16px;
     font-weight: 600;
     color: white;
+    touch-action: manipulation;
   }
-  .card-actions button:active, .bulk-bar button:active { opacity: 0.7; }
-  .card-actions button:disabled, .bulk-bar button:disabled { opacity: 0.4; }
-  .card-actions .resume-btn, .bulk-bar .resume-btn { background: var(--accent); }
-  .card-actions .delete-btn, .bulk-bar .delete-btn { background: var(--danger); }
+  .card-actions button:active, .bulk-actions button:active { opacity: 0.7; }
+  .card-actions button:disabled, .bulk-actions button:disabled { opacity: 0.4; }
+  /* Resume gets twice the width and the accent fill. Delete is a quiet
+     tinted button so a thumb aimed at Resume cannot land on a loud red
+     target; the confirm dialog is the second guard. */
+  .card-actions .resume-btn, .bulk-actions .resume-btn { flex: 2; background: var(--accent); }
+  .card-actions .delete-btn, .bulk-actions .delete-btn { flex: 1; background: var(--card-elevated); color: var(--danger); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .select-dot {
     width: 28px;
     height: 28px;
@@ -221,7 +225,11 @@
     line-height: 1;
   }
   .select-dot.on { background: var(--accent); border-color: var(--accent); }
-  .session-card.selected { border-color: var(--accent); }
+  .session-card.selected { border-color: var(--accent); background: #12263d; }
+  body.selecting .session-card { -webkit-user-select: none; user-select: none; }
+  /* Room for the fixed bulk bar so the last card is never hidden behind it. */
+  body.selecting main { padding-bottom: calc(150px + env(safe-area-inset-bottom)); }
+  body.selecting .toast { bottom: calc(env(safe-area-inset-bottom) + 140px); }
   .bulk-bar {
     position: fixed;
     left: 0;
@@ -229,24 +237,18 @@
     bottom: 0;
     z-index: 8;
     display: none;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px max(16px, env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
     background: var(--card-elevated);
     border-top: 1px solid var(--border);
   }
   .bulk-bar.show { display: flex; }
-  .bulk-bar .bulk-count { flex: 1; font-size: 15px; font-weight: 600; }
-  .bulk-bar button {
-    min-height: 44px;
-    border: none;
-    border-radius: 10px;
-    padding: 0 16px;
-    font-size: 16px;
-    font-weight: 600;
-    color: white;
-  }
-  .bulk-bar .all-btn { background: var(--card); color: var(--text); }
+  .bulk-top { display: flex; align-items: center; justify-content: space-between; }
+  .bulk-top .link-btn { min-width: 64px; padding: 0; }
+  .bulk-top .link-btn:last-child { text-align: right; }
+  .bulk-count { font-size: 15px; font-weight: 600; }
+  .bulk-actions { display: flex; gap: 10px; }
   .session-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .session-toggle {
     min-width: 0;
@@ -483,11 +485,16 @@
     <div id="disconnected" class="card-list"></div>
   </section>
 </main>
-<div id="bulk-bar" class="bulk-bar">
-  <span id="bulk-count" class="bulk-count">0 selected</span>
-  <button id="bulk-all" class="all-btn" type="button">All</button>
-  <button id="bulk-resume" class="resume-btn" type="button">Resume</button>
-  <button id="bulk-delete" class="delete-btn" type="button">Delete</button>
+<div id="bulk-bar" class="bulk-bar" role="toolbar" aria-label="Bulk actions">
+  <div class="bulk-top">
+    <button id="bulk-cancel" class="link-btn" type="button">Cancel</button>
+    <span id="bulk-count" class="bulk-count" aria-live="polite">0 selected</span>
+    <button id="bulk-all" class="link-btn" type="button">All</button>
+  </div>
+  <div class="bulk-actions">
+    <button id="bulk-resume" class="resume-btn" type="button">Resume</button>
+    <button id="bulk-delete" class="delete-btn" type="button">Delete</button>
+  </div>
 </div>
 <div id="toast" class="toast"></div>
 
@@ -561,6 +568,7 @@ const selectBtnEl = document.getElementById('select-btn');
 const bulkBarEl = document.getElementById('bulk-bar');
 const bulkCountEl = document.getElementById('bulk-count');
 const bulkAllEl = document.getElementById('bulk-all');
+const bulkCancelEl = document.getElementById('bulk-cancel');
 const bulkResumeEl = document.getElementById('bulk-resume');
 const bulkDeleteEl = document.getElementById('bulk-delete');
 const favBtnEl = document.getElementById('fav-btn');
@@ -955,6 +963,7 @@ function renderSessions(sessions) {
 
 function renderBulkBar(disconnected) {
   bulkBarEl.classList.toggle('show', selectMode);
+  document.body.classList.toggle('selecting', selectMode);
   bulkCountEl.textContent = selectedIds.size + ' selected';
   const none = selectedIds.size === 0 || bulkBusy;
   bulkResumeEl.disabled = none;
@@ -968,6 +977,7 @@ function buildCard(s) {
   const selected = selectMode && s.disconnected && selectedIds.has(s.id);
 
   const card = el('div', 'session-card' + (selected ? ' selected' : ''));
+  if (selectMode && s.disconnected) card.setAttribute('aria-selected', selected ? 'true' : 'false');
   const row = el('div', 'session-row');
 
   const toggle = el('button', 'session-toggle');
@@ -1206,6 +1216,11 @@ selectBtnEl.addEventListener('click', () => {
   selectMode = !selectMode;
   if (!selectMode) selectedIds.clear();
   expandedIds.clear();
+  renderSessions(lastSessions);
+});
+bulkCancelEl.addEventListener('click', () => {
+  selectMode = false;
+  selectedIds.clear();
   renderSessions(lastSessions);
 });
 bulkAllEl.addEventListener('click', () => {
