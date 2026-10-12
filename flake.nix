@@ -30,6 +30,9 @@
             src = self;
             # go.mod declares no external dependencies (stdlib only).
             vendorHash = null;
+            # trust_test.go builds a throwaway repo and linked worktree with
+            # the git CLI, and the build sandbox has no git on PATH.
+            nativeCheckInputs = [ pkgs.git ];
             meta = with pkgs.lib; {
               description = "Spawn, list, and delete Claude Code sessions from a phone";
               homepage = "https://github.com/bashfulrobot/claudio";
