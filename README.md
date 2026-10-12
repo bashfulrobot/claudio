@@ -67,6 +67,10 @@ phone without exposing it to the whole LAN.
 | `-git-bin` | `git` | Path to the `git` binary, used to decide whether a new session can be worktree-isolated |
 | `-roots` | `~/git,~/dev` | Comma-separated project root dirs offered in the folder picker |
 
+### Workspace trust
+
+`claude --bg` has no terminal for the workspace trust dialog, so an untrusted folder fails with `Workspace not trusted`. Before each spawn, claudio sets `projects["<path>"].hasTrustDialogAccepted` to `true` in `~/.claude.json` (or `$CLAUDE_CONFIG_DIR/.claude.json`). The path is the git repo root (the main checkout for a worktree) or the folder itself outside a repo. Spawns are refused for folders outside `-roots`, and for the home directory, where claude never saves trust. Trusting a repo activates its hooks and allow rules, so only point `-roots` at repos you wrote or reviewed.
+
 ## API
 
 | Method | Path | Description |
