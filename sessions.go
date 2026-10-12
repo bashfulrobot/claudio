@@ -236,6 +236,12 @@ func spawnSession(claudeBin, gitBin, cwd, name string, opts SpawnOptions) (Spawn
 		return res, err
 	}
 
+	// `claude --bg` has no terminal to show the workspace trust dialog, so an
+	// untrusted folder fails with "Workspace not trusted". Record trust first.
+	if err := ensureTrusted(gitBin, cwd); err != nil {
+		return res, fmt.Errorf("could not trust folder: %w", err)
+	}
+
 	args := []string{"--bg", "--name", name, "--remote-control", name}
 	if opts.Model != "" {
 		args = append(args, "--model", opts.Model)

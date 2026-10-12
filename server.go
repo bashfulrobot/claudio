@@ -85,6 +85,12 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "cwd is required")
 			return
 		}
+		// Spawning trusts the folder, so only folders under a configured root
+		// are allowed, never an arbitrary path from the request.
+		if !underRoots(body.Cwd, s.roots) {
+			writeError(w, http.StatusBadRequest, "folder is not under a configured root")
+			return
+		}
 		opts := SpawnOptions{
 			Model:          body.Model,
 			Effort:         body.Effort,
