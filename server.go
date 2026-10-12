@@ -12,6 +12,10 @@ import (
 //go:embed static
 var staticFS embed.FS
 
+// maxBodyBytes caps every JSON request body. The largest legitimate one is a
+// spawn with a 4000-byte prompt or a bulk call with 50 short ids.
+const maxBodyBytes = 64 << 10
+
 type Server struct {
 	claudeBin string
 	gitBin    string
@@ -77,6 +81,7 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 			Prompt         string `json:"prompt"`
 			Worktree       *bool  `json:"worktree"`
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request body")
 			return
@@ -217,6 +222,9 @@ func (s *Server) handleBulk(w http.ResponseWriter, r *http.Request) {
 		Action string   `json:"action"`
 		IDs    []string `json:"ids"`
 	}
+	// Bound the body before decoding: the maxBulkIDs cap in bulkAction only
+	// applies after the whole ids array is already in memory.
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
