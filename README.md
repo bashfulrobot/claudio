@@ -81,7 +81,8 @@ claudio -addr 100.64.0.1:8787 -host-name nix -peers mac=http://100.64.0.2:8787
 - Any `/api/*` request with `?host=<name>` is forwarded to that peer unchanged, so spawn, stop, resume, delete, bulk, output and folders all work remotely. The target address comes only from `-peers`.
 - `GET /api/hosts` lists this host and each peer with an `online` flag. The UI shows a host picker and a host badge only when a peer is configured.
 - Peers answer `?local=1` with their own sessions only, so two instances listing each other do not loop.
-- A non-GET `/api` request whose browser `Origin` differs from its `Host` gets a 403, so a web page in your phone's browser cannot spawn or delete sessions. Requests with no `Origin` (curl, a peer instance) pass.
+- A non-GET `/api` request gets a 403 when its browser `Origin` differs from its `Host`, or its `Sec-Fetch-Site` is not `same-origin` or `none`. A web page in your phone's browser cannot spawn or delete sessions. Requests with neither header (curl, a peer instance) pass.
+- DNS rebinding is not blocked: a page on a hostname an attacker rebinds to your tailnet IP is same-origin to itself. Reach claudio through `tailscale serve` (HTTPS, tailnet certificate) rather than a plain-http tailnet IP bind.
 - On NixOS set `services.claudio.hostName` and `services.claudio.peers` (name to base URL).
 - There is no auth between instances. Restrict the port with Tailscale ACLs to your phone and the main host.
 - Favorites are stored in the browser and apply to every host, so a favorite from one host may not exist on another.
