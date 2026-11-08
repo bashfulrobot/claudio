@@ -20,16 +20,23 @@ type Server struct {
 	claudeBin string
 	gitBin    string
 	roots     []string
+	hostName  string // label for this instance in the merged session list
+	peers     []Peer // other claudio instances, see peers.go
 	mux       *http.ServeMux
 }
 
-func NewServer(claudeBin, gitBin string, roots []string) *Server {
-	s := &Server{claudeBin: claudeBin, gitBin: gitBin, roots: roots, mux: http.NewServeMux()}
+func NewServer(claudeBin, gitBin string, roots []string, hostName string, peers []Peer) *Server {
+	s := &Server{claudeBin: claudeBin, gitBin: gitBin, roots: roots, hostName: hostName, peers: peers, mux: http.NewServeMux()}
 	s.routes()
 	return s
 }
 
+// ServeHTTP sends any /api request carrying ?host=<peer> to that peer before
+// the mux sees it, so every per-session route works remotely unchanged.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, "/api/") && s.forwardToPeer(w, r) {
+		return
+	}
 	s.mux.ServeHTTP(w, r)
 }
 
@@ -43,6 +50,16 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/sessions", s.handleSessions)
 	s.mux.HandleFunc("/api/sessions/", s.handleSessionByID)
 	s.mux.HandleFunc("/api/folders", s.handleFolders)
+	s.mux.HandleFunc("/api/hosts", s.handleHosts)
+}
+
+// GET /api/hosts -> this host plus each configured peer with an online flag
+func (s *Server) handleHosts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.hostsStatus())
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -60,7 +77,9 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		sessions, err := listSessions(s.claudeBin)
+		// local=1 is what a peer sends us: it wants only our own sessions, so
+		// two hosts configured as each other's peers never recurse.
+		sessions, err := s.listAllSessions(r.URL.Query().Get("local") != "1")
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return

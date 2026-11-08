@@ -66,6 +66,23 @@ phone without exposing it to the whole LAN.
 | `-claude-bin` | `claude` | Path to the `claude` CLI binary |
 | `-git-bin` | `git` | Path to the `git` binary, used to decide whether a new session can be worktree-isolated |
 | `-roots` | `~/git,~/dev` | Comma-separated project root dirs offered in the folder picker |
+| `-host-name` | short hostname | Label for this host in the session list |
+| `-peers` | none | Other claudio instances, `name=http://tailscale-ip:8787`, comma-separated |
+
+### Multiple hosts
+
+Run claudio on each machine (Linux or macOS), each logged in to `claude` as its own user. Give one instance, the one your phone talks to, a `-peers` list:
+
+```bash
+claudio -addr 100.64.0.1:8787 -host-name nix -peers mac=http://100.64.0.2:8787
+```
+
+- `GET /api/sessions` merges its own sessions with every peer's, each tagged with a `host` field. An unreachable peer is skipped, so an offline machine does not blank the list.
+- Any `/api/*` request with `?host=<name>` is forwarded to that peer unchanged, so spawn, stop, resume, delete, bulk, output and folders all work remotely. The target address comes only from `-peers`.
+- `GET /api/hosts` lists this host and each peer with an `online` flag. The UI shows a host picker and a host badge only when a peer is configured.
+- Peers answer `?local=1` with their own sessions only, so two instances listing each other do not loop.
+- There is no auth between instances. Restrict the port with Tailscale ACLs to your phone and the main host.
+- Favorites are stored in the browser and apply to every host, so a favorite from one host may not exist on another.
 
 ### Workspace trust
 

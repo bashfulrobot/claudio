@@ -78,6 +78,10 @@ type Session struct {
 	// stopped, finished, or orphaned by a supervisor restart. The
 	// conversation is still on disk, so it can be resumed or deleted.
 	Disconnected bool `json:"disconnected"`
+
+	// Host names the claudio instance the session runs on. Set by the server,
+	// never by `claude agents`.
+	Host string `json:"host,omitempty"`
 }
 
 // SpawnOptions are the optional per-session overrides the web UI's

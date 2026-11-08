@@ -9,7 +9,7 @@ import (
 
 func TestBodiesOverLimitAreRejected(t *testing.T) {
 	bin, logPath := stubClaude(t)
-	srv := NewServer(bin, "git", nil)
+	srv := NewServer(bin, "git", nil, "here", nil)
 
 	big := `{"action":"remove","ids":["` + strings.Repeat("a", maxBodyBytes) + `"]}`
 	req := httptest.NewRequest(http.MethodPost, "/api/sessions/bulk", strings.NewReader(big))

@@ -180,6 +180,7 @@
   .badge.idle, .badge.done { background: #0e3d1d; color: #5fe38a; }
   .badge.blocked, .badge.waiting { background: #4a0e12; color: #ff6b6b; }
   .badge.worktree { background: var(--card-elevated); color: var(--muted); }
+  .badge.host { background: #0e2f4a; color: #6bb8ff; }
   .badge.stopped { background: var(--card-elevated); color: var(--muted); }
   .section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
   .section-head h2 { margin: 0 0 0 4px; }
@@ -505,6 +506,11 @@
       <button id="modal-close" class="modal-close" type="button" aria-label="Close">✕</button>
     </div>
 
+    <div id="host-row" hidden>
+      <label for="host">Host</label>
+      <select id="host"></select>
+    </div>
+
     <label for="cwd">Folder</label>
     <div class="picker">
       <input id="cwd" type="text" placeholder="/home/you/git/some-project" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off">
@@ -579,6 +585,8 @@ const addBtnEl = document.getElementById('add-btn');
 const modalBackdropEl = document.getElementById('modal-backdrop');
 const modalCloseEl = document.getElementById('modal-close');
 const fuzzyDropdownEl = document.getElementById('fuzzy-dropdown');
+const hostRowEl = document.getElementById('host-row');
+const hostInput = document.getElementById('host');
 const cwdInput = document.getElementById('cwd');
 const nameInput = document.getElementById('name');
 const spawnBtn = document.getElementById('spawn-btn');
@@ -602,6 +610,15 @@ let selectMode = false;      // Disconnected list shows checkboxes and the bulk 
 let selectedIds = new Set(); // disconnected session ids ticked in select mode
 let bulkBusy = false;        // a bulk request is in flight; buttons stay disabled
 let outputCache = new Map(); // session id -> {loading} | {error} | {data: SessionOutput} for the expanded output panel
+let hosts = [];              // [{name, local?, online}] from /api/hosts; more than one entry turns on the host UI
+
+// Every per-session and folder request carries ?host=<name> so the server
+// routes it to the claudio instance that owns the session.
+function hostQ(host) { return host ? `?host=${encodeURIComponent(host)}` : ''; }
+function hostOfId(id) {
+  const s = lastSessions.find((x) => x.id === id);
+  return s ? s.host : '';
+}
 
 // Spawn options are deliberately NOT persisted (no localStorage): an option
 // that's both sticky and hidden behind a closed <details> is invisible
@@ -989,6 +1006,7 @@ function buildCard(s) {
   const meta = el('div', 'session-meta');
   meta.appendChild(el('span', 'badge ' + state, s.disconnected ? (s.state || 'stopped') : (s.status || s.state || 'unknown')));
   if (s.waitingFor) meta.appendChild(el('span', 'badge blocked', s.waitingFor));
+  if (hosts.length > 1 && s.host) meta.appendChild(el('span', 'badge host', s.host));
   if (s.worktree) meta.appendChild(el('span', 'badge worktree', '⑂ ' + s.worktree));
   meta.appendChild(el('span', null, s.id || ''));
   info.appendChild(meta);
@@ -1111,7 +1129,7 @@ function renderOutputPanel(s) {
 async function loadOutput(id) {
   outputCache.set(id, { loading: true });
   try {
-    const res = await fetch(`${API_BASE}/api/sessions/${id}/output`);
+    const res = await fetch(`${API_BASE}/api/sessions/${id}/output${hostQ(hostOfId(id))}`);
     const body = await res.json();
     if (!res.ok) throw new Error(body.error || 'failed to load output');
     outputCache.set(id, { data: body });
@@ -1128,7 +1146,7 @@ async function onKill(btn, id, name) {
   if (!confirm(`Delete session "${name}"?`)) return;
   btn.disabled = true;
   try {
-    const res = await fetch(`${API_BASE}/api/sessions/${id}`, { method: 'DELETE' });
+    const res = await fetch(`${API_BASE}/api/sessions/${id}${hostQ(hostOfId(id))}`, { method: 'DELETE' });
     const body = await res.json();
     if (!res.ok) throw new Error(body.error || 'failed to delete');
     expandedIds.delete(id);
@@ -1148,7 +1166,7 @@ async function onKill(btn, id, name) {
 async function onStop(btn, id, name) {
   btn.disabled = true;
   try {
-    const res = await fetch(`${API_BASE}/api/sessions/${id}/stop`, { method: 'POST' });
+    const res = await fetch(`${API_BASE}/api/sessions/${id}/stop${hostQ(hostOfId(id))}`, { method: 'POST' });
     const body = await res.json();
     if (!res.ok) throw new Error(body.error || 'failed to stop');
     expandedIds.delete(id);
@@ -1164,7 +1182,7 @@ async function onStop(btn, id, name) {
 async function onResume(btn, id, name) {
   btn.disabled = true;
   try {
-    const res = await fetch(`${API_BASE}/api/sessions/${id}/resume`, { method: 'POST' });
+    const res = await fetch(`${API_BASE}/api/sessions/${id}/resume${hostQ(hostOfId(id))}`, { method: 'POST' });
     const body = await res.json();
     if (!res.ok) throw new Error(body.error || 'failed to resume');
     outputCache.delete(id);
@@ -1187,16 +1205,27 @@ async function onBulk(action) {
   bulkBusy = true;
   renderBulkBar(lastSessions.filter((s) => s.disconnected));
   try {
-    const res = await fetch(`${API_BASE}/api/sessions/bulk`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action, ids }),
-    });
-    const body = await res.json();
-    if (!res.ok) throw new Error(body.error || 'bulk request failed');
-    const failed = body.results.filter((r) => !r.ok);
-    const done = body.results.length - failed.length;
-    for (const r of body.results) {
+    // One request per host: each claudio only knows its own sessions.
+    const byHost = new Map();
+    for (const id of ids) {
+      const h = hostOfId(id) || '';
+      if (!byHost.has(h)) byHost.set(h, []);
+      byHost.get(h).push(id);
+    }
+    const results = [];
+    for (const [h, hostIds] of byHost) {
+      const res = await fetch(`${API_BASE}/api/sessions/bulk${hostQ(h)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, ids: hostIds }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || 'bulk request failed');
+      results.push(...body.results);
+    }
+    const failed = results.filter((r) => !r.ok);
+    const done = results.length - failed.length;
+    for (const r of results) {
       if (r.ok) { selectedIds.delete(r.id); outputCache.delete(r.id); }
     }
     const verb = action === 'remove' ? 'Deleted' : 'Resumed';
@@ -1234,8 +1263,8 @@ bulkDeleteEl.addEventListener('click', () => onBulk('remove'));
 
 async function loadFolders() {
   try {
-    const res = await fetch(`${API_BASE}/api/folders`);
-    if (!res.ok) return;
+    const res = await fetch(`${API_BASE}/api/folders${hostQ(hostInput.value)}`);
+    if (!res.ok) { allEntries = []; renderFavDropdown(); return; }
     const groups = await res.json();
     allEntries = flattenGroups(groups);
     renderFavDropdown();
@@ -1243,6 +1272,35 @@ async function loadFolders() {
     // folder picker is a convenience; failing silently is fine, free-text still works
   }
 }
+
+// Fills the spawn form's host picker. Hidden until a peer is configured, so
+// a single-host install looks exactly as before.
+async function loadHosts() {
+  try {
+    const res = await fetch(`${API_BASE}/api/hosts`);
+    if (!res.ok) return;
+    hosts = await res.json();
+  } catch (e) {
+    return;
+  }
+  const prev = hostInput.value;
+  hostInput.textContent = '';
+  for (const h of hosts) {
+    const o = el('option', null, h.online ? h.name : h.name + ' (offline)');
+    o.value = h.name;
+    o.disabled = !h.online;
+    hostInput.appendChild(o);
+  }
+  const local = hosts.find((h) => h.local);
+  hostInput.value = hosts.some((h) => h.name === prev && h.online) ? prev : (local ? local.name : '');
+  hostRowEl.hidden = hosts.length < 2;
+}
+
+hostInput.addEventListener('change', () => {
+  cwdInput.value = '';
+  nameInput.value = '';
+  loadFolders();
+});
 
 cwdInput.addEventListener('input', () => {
   if (!nameInput.value && cwdInput.value) {
@@ -1294,12 +1352,13 @@ spawnBtn.addEventListener('click', async () => {
     // worktree is the one deliberate default-on exception, so it's always
     // sent explicitly.
     const payload = { cwd, name, worktree: worktreeInput.checked };
+    const spawnHost = hostInput.value;
     if (modelInput.value) payload.model = modelInput.value;
     if (effortInput.value) payload.effort = effortInput.value;
     if (permissionModeInput.value) payload.permissionMode = permissionModeInput.value;
     if (promptInput.value.trim()) payload.prompt = promptInput.value.trim();
 
-    const res = await fetch(`${API_BASE}/api/sessions`, {
+    const res = await fetch(`${API_BASE}/api/sessions${hostQ(spawnHost)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -1347,9 +1406,9 @@ document.addEventListener('keydown', (e) => {
 });
 
 favorites = loadFavorites();
-loadFolders();
-refreshSessions();
+loadHosts().then(() => { loadFolders(); refreshSessions(); });
 setInterval(refreshSessions, 4000);
+setInterval(loadHosts, 30000);
 </script>
 </body>
 </html>
