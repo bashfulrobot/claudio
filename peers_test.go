@@ -167,6 +167,27 @@ func TestCrossOriginWritesAreRejected(t *testing.T) {
 	}
 }
 
+func TestCrossSiteFetchMetadataIsRejected(t *testing.T) {
+	srv := newMultiServer(t, nil)
+	for site, want := range map[string]int{
+		"cross-site":  http.StatusForbidden,
+		"same-site":   http.StatusForbidden,
+		"same-origin": http.StatusOK,
+		"none":        http.StatusOK,
+		"":            http.StatusOK,
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/api/sessions/run1/stop", nil)
+		if site != "" {
+			req.Header.Set("Sec-Fetch-Site", site)
+		}
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != want {
+			t.Errorf("Sec-Fetch-Site %q: status = %d, want %d", site, rec.Code, want)
+		}
+	}
+}
+
 func TestHostsEndpoint(t *testing.T) {
 	up, _, _ := fakePeer(t, `[]`)
 	down, _, _ := fakePeer(t, `[]`)

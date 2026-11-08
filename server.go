@@ -48,7 +48,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // originAllowed refuses a state-changing request that a browser tagged with
-// another site's Origin. Without it any web page the phone visits could POST
+// another site's Origin or a cross-site Sec-Fetch-Site. Without it any web page the phone visits could POST
 // to claudio (the JSON decoder ignores Content-Type, so a "simple" cross-site
 // request is enough) and spawn or delete sessions. Requests with no Origin,
 // such as curl or a peer claudio, pass: only a browser sets one. The peer hop
@@ -56,6 +56,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func originAllowed(r *http.Request) bool {
 	if r.Method == http.MethodGet || r.Method == http.MethodHead {
 		return true
+	}
+	// Browsers set Sec-Fetch-Site on every request and page script cannot
+	// change it, so it also covers requests that carry no Origin (a ping
+	// link, for one). It does not stop DNS rebinding: a rebound page is
+	// same-origin to itself. See the README limits.
+	switch r.Header.Get("Sec-Fetch-Site") {
+	case "", "same-origin", "none":
+	default:
+		return false
 	}
 	origin := r.Header.Get("Origin")
 	if origin == "" {
