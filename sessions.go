@@ -285,6 +285,12 @@ func spawnSession(claudeBin, gitBin, cwd, name string, opts SpawnOptions) (Spawn
 		args = append(args, "--", opts.Prompt)
 	}
 
+	return res, launchBackground(claudeBin, cwd, name, args)
+}
+
+// launchBackground runs `claude <args>` in cwd as a detached process and waits
+// a bounded time for it to either fail or settle. args must hold --bg.
+func launchBackground(claudeBin, cwd, name string, args []string) error {
 	cmd := exec.Command(claudeBin, args...)
 	cmd.Dir = cwd
 	// Detach into its own session/process group so it survives past the
@@ -296,7 +302,7 @@ func spawnSession(claudeBin, gitBin, cwd, name string, opts SpawnOptions) (Spawn
 	cmd.Stderr = stderr
 
 	if err := cmd.Start(); err != nil {
-		return res, fmt.Errorf("failed to launch claude: %w", err)
+		return fmt.Errorf("failed to launch claude: %w", err)
 	}
 
 	// Bounded wait, not fire-and-forget: worktree-by-default adds a git
@@ -314,7 +320,7 @@ func spawnSession(claudeBin, gitBin, cwd, name string, opts SpawnOptions) (Spawn
 	select {
 	case werr := <-done:
 		if werr != nil {
-			return res, fmt.Errorf("claude exited immediately: %w (stderr: %s)", werr, stderr.String())
+			return fmt.Errorf("claude exited immediately: %w (stderr: %s)", werr, stderr.String())
 		}
 	case <-time.After(spawnGrace):
 		// Still running past the grace period: treat it as a successful
@@ -328,7 +334,7 @@ func spawnSession(claudeBin, gitBin, cwd, name string, opts SpawnOptions) (Spawn
 		}()
 	}
 
-	return res, nil
+	return nil
 }
 
 // findSession returns the listed session with the given short id. Every

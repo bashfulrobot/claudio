@@ -273,6 +273,22 @@
     flex-shrink: 0;
   }
   .kill-btn:active { opacity: 0.7; }
+  /* Park sits beside Kill but is the quiet one: it is reversible, so it takes
+     the tinted fill and Kill keeps the loud red. */
+  .park-btn {
+    background: var(--card-elevated);
+    color: var(--text);
+    border: none;
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 15px;
+    font-weight: 600;
+    flex-shrink: 0;
+  }
+  .park-btn:active { opacity: 0.7; }
+  .park-btn:disabled { opacity: 0.4; }
+  .session-row .row-actions { display: flex; gap: 8px; flex-shrink: 0; }
+  .parked-card .resume-btn:disabled { background: var(--card-elevated); color: var(--muted); }
   .expand-row {
     display: flex;
     justify-content: flex-end;
@@ -485,6 +501,12 @@
     </div>
     <div id="disconnected" class="card-list"></div>
   </section>
+  <section id="parked-section" hidden>
+    <div class="section-head">
+      <h2>Parked <span id="parked-count"></span></h2>
+    </div>
+    <div id="parked" class="card-list"></div>
+  </section>
 </main>
 <div id="bulk-bar" class="bulk-bar" role="toolbar" aria-label="Bulk actions">
   <div class="bulk-top">
@@ -571,6 +593,9 @@ const disconnectedEl = document.getElementById('disconnected');
 const disconnectedSectionEl = document.getElementById('disconnected-section');
 const discCountEl = document.getElementById('disc-count');
 const selectBtnEl = document.getElementById('select-btn');
+const parkedEl = document.getElementById('parked');
+const parkedSectionEl = document.getElementById('parked-section');
+const parkedCountEl = document.getElementById('parked-count');
 const bulkBarEl = document.getElementById('bulk-bar');
 const bulkCountEl = document.getElementById('bulk-count');
 const bulkAllEl = document.getElementById('bulk-all');
@@ -1035,7 +1060,16 @@ function buildCard(s) {
       e.stopPropagation(); // otherwise the tap also toggles the card open
       onKill(killBtn, s.id, displayName);
     });
-    row.appendChild(killBtn);
+    const parkBtn = el('button', 'park-btn', 'Park');
+    parkBtn.type = 'button';
+    parkBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      onPark(parkBtn, s.id, displayName);
+    });
+    const actionsBox = el('div', 'row-actions');
+    actionsBox.appendChild(parkBtn);
+    actionsBox.appendChild(killBtn);
+    row.appendChild(actionsBox);
   }
   card.appendChild(row);
 
@@ -1140,6 +1174,80 @@ async function loadOutput(id) {
   // collapsed it (or collapsed and re-expanded a different one) while the
   // fetch was in flight.
   if (expandedIds.has(id)) renderSessions(lastSessions);
+}
+
+// Park stops the session and saves its conversation to disk, so it leaves
+// the agent list and the Remote Control app until resumed. No confirm: it is
+// reversible from the Parked section.
+async function onPark(btn, id, name) {
+  btn.disabled = true;
+  try {
+    const res = await fetch(`${API_BASE}/api/sessions/${id}/park${hostQ(hostOfId(id))}`, { method: 'POST' });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || 'failed to park');
+    expandedIds.delete(id);
+    outputCache.delete(id);
+    toast(`Parked ${name}`);
+    expandedIds.clear(); // refreshSessions skips while a card is expanded
+    refreshSessions();
+  } catch (err) {
+    toast(err.message);
+    btn.disabled = false;
+  }
+}
+
+async function onResumeParked(btn, p) {
+  btn.disabled = true;
+  try {
+    const res = await fetch(`${API_BASE}/api/parked/${encodeURIComponent(p.slug)}/resume${hostQ(p.host)}`, { method: 'POST' });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || 'failed to resume');
+    toast(`Resumed ${p.slug}`);
+    expandedIds.clear();
+    setTimeout(refreshSessions, 1500);
+  } catch (err) {
+    toast(err.message);
+    btn.disabled = false;
+  }
+}
+
+// Parked work from every host, whichever tool parked it (the rc-mgmt skill
+// writes the same files). Refreshed with the session list.
+async function refreshParked() {
+  try {
+    const res = await fetch(`${API_BASE}/api/parked`);
+    if (!res.ok) return;
+    renderParked((await res.json()) || []);
+  } catch (e) {
+    // a failed poll keeps the last list on screen
+  }
+}
+
+function renderParked(items) {
+  parkedEl.textContent = '';
+  parkedSectionEl.hidden = !items.length;
+  parkedCountEl.textContent = items.length ? '(' + items.length + ')' : '';
+  for (const p of items) {
+    const card = el('div', 'session-card parked-card');
+    const info = el('div', 'session-info');
+    info.appendChild(el('div', 'session-name', p.slug));
+    info.appendChild(el('div', 'session-cwd', [p.repo, p.branch].filter(Boolean).join(' ⑂ ')));
+    const meta = el('div', 'session-meta');
+    if (hosts.length > 1 && p.host) meta.appendChild(el('span', 'badge host', p.host));
+    if (p.folderGone) meta.appendChild(el('span', 'badge blocked', 'folder gone'));
+    if (p.created) meta.appendChild(el('span', null, p.created.slice(0, 16).replace('T', ' ')));
+    info.appendChild(meta);
+    card.appendChild(info);
+
+    const actions = el('div', 'card-actions');
+    const resumeBtn = el('button', 'resume-btn', p.folderGone ? 'Folder gone' : 'Resume');
+    resumeBtn.type = 'button';
+    resumeBtn.disabled = !!p.folderGone;
+    resumeBtn.addEventListener('click', () => onResumeParked(resumeBtn, p));
+    actions.appendChild(resumeBtn);
+    card.appendChild(actions);
+    parkedEl.appendChild(card);
+  }
 }
 
 async function onKill(btn, id, name) {
@@ -1406,8 +1514,9 @@ document.addEventListener('keydown', (e) => {
 });
 
 favorites = loadFavorites();
-loadHosts().then(() => { loadFolders(); refreshSessions(); });
+loadHosts().then(() => { loadFolders(); refreshSessions(); refreshParked(); });
 setInterval(refreshSessions, 4000);
+setInterval(refreshParked, 4000);
 setInterval(loadHosts, 30000);
 </script>
 </body>

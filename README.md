@@ -24,6 +24,12 @@ subscription, the same as if you'd typed `claude` in a terminal.
 - **Stop** — pause a session while keeping its conversation, via
   `claude stop <id>`. Resume it later from a terminal with
   `claude attach <id>`. Unlike Delete, this leaves the worktree in place.
+- **Park** — stop a session and save its conversation and git state to
+  disk, so it leaves `claude agents` and the Remote Control app until you
+  resume it. Parked work shows in its own list with a Resume button.
+  Parking uses the same files as the `rc-mgmt` skill in claude-skills
+  (`~/.claude/handoffs`), so work parked by either tool is listed and resumed
+  by both. Uncommitted files stay in the folder.
 - **Delete** — permanently remove a session with `claude rm <id>`, which
   also removes its worktree if it has one.
 
@@ -101,6 +107,9 @@ claudio -addr 100.64.0.1:8787 -host-name nix -peers mac=http://100.64.0.2:8787
 | `POST` | `/api/sessions/{id}/resume` | Restart a disconnected session under the same id (`claude respawn <id>`) |
 | `DELETE` | `/api/sessions/{id}` | Permanently delete a session and its worktree (`claude rm <id>`) |
 | `POST` | `/api/sessions/bulk` | `{"action":"remove"\|"resume","ids":[…]}` (max 50); returns one result per id, so a refused delete does not hide the others |
+| `POST` | `/api/sessions/{id}/park` | Stop a session and save a snapshot plus handoff file; it then leaves the session list |
+| `GET` | `/api/parked` | List parked work on this host and every peer |
+| `POST` | `/api/parked/{slug}/resume` | Respawn the stopped session, or fork the saved conversation into a new one in the same folder |
 | `GET` | `/api/folders` | List immediate subdirectories of the configured roots |
 
 `POST /api/sessions` body:
