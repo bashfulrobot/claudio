@@ -85,6 +85,36 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/sessions/", s.handleSessionByID)
 	s.mux.HandleFunc("/api/folders", s.handleFolders)
 	s.mux.HandleFunc("/api/hosts", s.handleHosts)
+	s.mux.HandleFunc("/api/parked", s.handleParked)
+	s.mux.HandleFunc("/api/parked/", s.handleParkedBySlug)
+}
+
+// GET /api/parked -> parked work on this host and every reachable peer
+func (s *Server) handleParked(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.listAllParked(r.URL.Query().Get("local") != "1"))
+}
+
+// POST /api/parked/{slug}/resume -> bring parked work back (see resumeParked)
+func (s *Server) handleParkedBySlug(w http.ResponseWriter, r *http.Request) {
+	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/parked/"), "/")
+	parts := strings.Split(rest, "/")
+	if len(parts) != 2 || parts[1] != "resume" {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if err := resumeParked(s.claudeBin, s.gitBin, s.roots, parts[0]); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "resumed"})
 }
 
 // GET /api/hosts -> this host plus each configured peer with an online flag
@@ -219,6 +249,18 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "stopped"})
+
+	case len(parts) == 2 && parts[1] == "park":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		p, err := parkSession(s.claudeBin, s.gitBin, parts[0])
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, p)
 
 	case len(parts) == 2 && parts[1] == "resume":
 		if r.Method != http.MethodPost {

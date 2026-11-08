@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -114,6 +114,7 @@ func (s *Server) listAllSessions(includePeers bool) ([]Session, error) {
 	for i := range local {
 		local[i].Host = s.hostName
 	}
+	local = hideParked(local)
 	if !includePeers || len(s.peers) == 0 {
 		return local, nil
 	}
@@ -152,6 +153,39 @@ func getPeerJSON(p Peer, path string, v any) error {
 		return fmt.Errorf("GET %s: status %d", path, resp.StatusCode)
 	}
 	return json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(v)
+}
+
+// listAllParked returns this host's parked work plus every reachable
+// peer's, each tagged with its host. A dead peer is skipped like in
+// listAllSessions.
+func (s *Server) listAllParked(includePeers bool) []Parked {
+	out := listParked()
+	for i := range out {
+		out[i].Host = s.hostName
+	}
+	if !includePeers || len(s.peers) == 0 {
+		return out
+	}
+	results := make([][]Parked, len(s.peers))
+	var wg sync.WaitGroup
+	for i, p := range s.peers {
+		wg.Go(func() {
+			var got []Parked
+			if err := getPeerJSON(p, "/api/parked?local=1", &got); err != nil {
+				log.Printf("peer %s: %v", p.Name, err)
+				return
+			}
+			for j := range got {
+				got[j].Host = p.Name
+			}
+			results[i] = got
+		})
+	}
+	wg.Wait()
+	for _, r := range results {
+		out = append(out, r...)
+	}
+	return out
 }
 
 // hostsStatus pings every peer concurrently. The local host is always online.
