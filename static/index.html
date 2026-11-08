@@ -194,6 +194,9 @@
     padding: 0 8px;
   }
   .link-btn:active { opacity: 0.7; }
+  .list-filter { margin-bottom: 8px; }
+  .more-btn { width: 100%; margin-top: 8px; }
+  .more-btn[hidden] { display: none; }
   .card-actions { display: flex; gap: 10px; margin-top: 12px; }
   .card-actions button, .bulk-actions button {
     min-height: 44px;
@@ -499,13 +502,17 @@
       <h2>Disconnected <span id="disc-count"></span></h2>
       <button id="select-btn" class="link-btn" type="button">Select</button>
     </div>
+    <input id="disc-filter" class="list-filter" type="text" placeholder="Filter by name, folder or host" aria-label="Filter disconnected sessions" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off">
     <div id="disconnected" class="card-list"></div>
+    <button id="disc-more" class="link-btn more-btn" type="button" hidden></button>
   </section>
   <section id="parked-section" hidden>
     <div class="section-head">
       <h2>Parked <span id="parked-count"></span></h2>
     </div>
+    <input id="parked-filter" class="list-filter" type="text" placeholder="Filter by name, repo or host" aria-label="Filter parked work" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off">
     <div id="parked" class="card-list"></div>
+    <button id="parked-more" class="link-btn more-btn" type="button" hidden></button>
   </section>
 </main>
 <div id="bulk-bar" class="bulk-bar" role="toolbar" aria-label="Bulk actions">
@@ -596,6 +603,10 @@ const selectBtnEl = document.getElementById('select-btn');
 const parkedEl = document.getElementById('parked');
 const parkedSectionEl = document.getElementById('parked-section');
 const parkedCountEl = document.getElementById('parked-count');
+const discFilterEl = document.getElementById('disc-filter');
+const discMoreEl = document.getElementById('disc-more');
+const parkedFilterEl = document.getElementById('parked-filter');
+const parkedMoreEl = document.getElementById('parked-more');
 const bulkBarEl = document.getElementById('bulk-bar');
 const bulkCountEl = document.getElementById('bulk-count');
 const bulkAllEl = document.getElementById('bulk-all');
@@ -767,6 +778,50 @@ function fuzzyScore(query, target) {
   if (qi < q.length) return null; // not every query character matched
   score -= t.length * 0.01;       // mild preference for shorter names
   return score;
+}
+
+// The Disconnected and Parked lists grow without bound, so each gets a fuzzy
+// filter and a "Show more" page. Newest first; an active filter sorts by
+// match score instead. `text` is the haystack for one item.
+const PAGE_SIZE = 10;
+let discLimit = PAGE_SIZE;
+let parkedLimit = PAGE_SIZE;
+let lastParked = [];
+
+function filterSort(items, query, text, when) {
+  const q = query.trim();
+  let rows = items.map((it) => ({ it, score: q ? fuzzyScore(q, text(it)) : 0 }));
+  if (q) rows = rows.filter((r) => r.score !== null);
+  rows.sort((a, b) => (q && b.score !== a.score) ? b.score - a.score : when(b.it) - when(a.it));
+  return rows.map((r) => r.it);
+}
+
+function ago(ms) {
+  if (!ms) return '';
+  const s = Math.max(0, (Date.now() - ms) / 1000);
+  if (s < 90) return 'just now';
+  if (s < 5400) return Math.round(s / 60) + 'm ago';
+  if (s < 129600) return Math.round(s / 3600) + 'h ago';
+  if (s < 2592000) return Math.round(s / 86400) + 'd ago';
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+function timeSpan(ms) {
+  const t = el('span', null, ago(ms));
+  if (ms) t.title = new Date(ms).toLocaleString();
+  return t;
+}
+
+function discMatches() {
+  const all = lastSessions.filter((s) => s.disconnected);
+  return filterSort(all, discFilterEl.value,
+    (s) => [s.name, s.repo, s.cwd, s.host, s.id].filter(Boolean).join(' '),
+    (s) => s.startedAt || 0);
+}
+
+function setMore(btn, shown, total) {
+  btn.hidden = shown >= total;
+  btn.textContent = `Show more (${total - shown} left)`;
 }
 
 // Favorites live in a dropdown off the header star button, not inline in the
@@ -997,10 +1052,17 @@ function renderSessions(sessions) {
 
   disconnectedEl.textContent = '';
   disconnectedSectionEl.hidden = !disconnected.length;
-  discCountEl.textContent = disconnected.length ? '(' + disconnected.length + ')' : '';
+  const matches = discMatches();
+  discCountEl.textContent = !disconnected.length ? ''
+    : matches.length === disconnected.length ? '(' + disconnected.length + ')'
+    : '(' + matches.length + ' of ' + disconnected.length + ')';
   selectBtnEl.textContent = selectMode ? 'Cancel' : 'Select';
-  for (const s of disconnected) disconnectedEl.appendChild(buildCard(s));
-  renderBulkBar(disconnected);
+  discFilterEl.hidden = disconnected.length <= PAGE_SIZE && !discFilterEl.value;
+  const page = matches.slice(0, discLimit);
+  if (!page.length && disconnected.length) disconnectedEl.appendChild(el('div', 'empty', 'No matches'));
+  for (const s of page) disconnectedEl.appendChild(buildCard(s));
+  setMore(discMoreEl, page.length, matches.length);
+  renderBulkBar(matches);
 }
 
 function renderBulkBar(disconnected) {
@@ -1034,6 +1096,7 @@ function buildCard(s) {
   if (hosts.length > 1 && s.host) meta.appendChild(el('span', 'badge host', s.host));
   if (s.worktree) meta.appendChild(el('span', 'badge worktree', '⑂ ' + s.worktree));
   meta.appendChild(el('span', null, s.id || ''));
+  if (s.disconnected && s.startedAt) meta.appendChild(timeSpan(s.startedAt));
   info.appendChild(meta);
   toggle.appendChild(info);
 
@@ -1223,11 +1286,22 @@ async function refreshParked() {
   }
 }
 
+function parkedWhen(p) { return p.created ? Date.parse(p.created) || 0 : 0; }
+
 function renderParked(items) {
+  lastParked = items;
   parkedEl.textContent = '';
   parkedSectionEl.hidden = !items.length;
-  parkedCountEl.textContent = items.length ? '(' + items.length + ')' : '';
-  for (const p of items) {
+  const matches = filterSort(items, parkedFilterEl.value,
+    (p) => [p.slug, p.repo, p.branch, p.host].filter(Boolean).join(' '), parkedWhen);
+  parkedCountEl.textContent = !items.length ? ''
+    : matches.length === items.length ? '(' + items.length + ')'
+    : '(' + matches.length + ' of ' + items.length + ')';
+  parkedFilterEl.hidden = items.length <= PAGE_SIZE && !parkedFilterEl.value;
+  const page = matches.slice(0, parkedLimit);
+  if (!page.length && items.length) parkedEl.appendChild(el('div', 'empty', 'No matches'));
+  setMore(parkedMoreEl, page.length, matches.length);
+  for (const p of page) {
     const card = el('div', 'session-card parked-card');
     const info = el('div', 'session-info');
     info.appendChild(el('div', 'session-name', p.slug));
@@ -1235,7 +1309,7 @@ function renderParked(items) {
     const meta = el('div', 'session-meta');
     if (hosts.length > 1 && p.host) meta.appendChild(el('span', 'badge host', p.host));
     if (p.folderGone) meta.appendChild(el('span', 'badge blocked', 'folder gone'));
-    if (p.created) meta.appendChild(el('span', null, p.created.slice(0, 16).replace('T', ' ')));
+    if (p.created) meta.appendChild(timeSpan(parkedWhen(p)));
     info.appendChild(meta);
     card.appendChild(info);
 
@@ -1245,8 +1319,29 @@ function renderParked(items) {
     resumeBtn.disabled = !!p.folderGone;
     resumeBtn.addEventListener('click', () => onResumeParked(resumeBtn, p));
     actions.appendChild(resumeBtn);
+    const delBtn = el('button', 'delete-btn', 'Delete');
+    delBtn.type = 'button';
+    delBtn.addEventListener('click', () => onDeleteParked(delBtn, p));
+    actions.appendChild(delBtn);
     card.appendChild(actions);
     parkedEl.appendChild(card);
+  }
+}
+
+// Removes the handoff and its saved conversation on the owning host. Files in
+// the project folder stay where they are.
+async function onDeleteParked(btn, p) {
+  if (!confirm(`Delete parked work "${p.slug}"? Its saved conversation is removed.`)) return;
+  btn.disabled = true;
+  try {
+    const res = await fetch(`${API_BASE}/api/parked/${encodeURIComponent(p.slug)}${hostQ(p.host)}`, { method: 'DELETE' });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || 'failed to delete');
+    toast(`Deleted ${p.slug}`);
+    refreshParked();
+  } catch (err) {
+    toast(err.message);
+    btn.disabled = false;
   }
 }
 
@@ -1360,8 +1455,12 @@ bulkCancelEl.addEventListener('click', () => {
   selectedIds.clear();
   renderSessions(lastSessions);
 });
+discFilterEl.addEventListener('input', () => { discLimit = PAGE_SIZE; renderSessions(lastSessions); });
+discMoreEl.addEventListener('click', () => { discLimit += PAGE_SIZE; renderSessions(lastSessions); });
+parkedFilterEl.addEventListener('input', () => { parkedLimit = PAGE_SIZE; renderParked(lastParked); });
+parkedMoreEl.addEventListener('click', () => { parkedLimit += PAGE_SIZE; renderParked(lastParked); });
 bulkAllEl.addEventListener('click', () => {
-  const disconnected = lastSessions.filter((s) => s.disconnected);
+  const disconnected = discMatches(); // "All" means every match, across pages
   if (selectedIds.size === disconnected.length) selectedIds.clear();
   else for (const s of disconnected) selectedIds.add(s.id);
   renderSessions(lastSessions);

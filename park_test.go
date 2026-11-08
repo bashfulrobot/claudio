@@ -258,3 +258,27 @@ func TestSlugLookupRejectsPathTricks(t *testing.T) {
 		}
 	}
 }
+
+func TestDeleteParkedRemovesHandoffAndSnapshotOnly(t *testing.T) {
+	e := newParkEnv(t, true)
+	if _, err := parkSession(e.bin, "git", "run1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := deleteParked("my-wor"); err == nil {
+		t.Fatal("prefix delete succeeded, want refusal")
+	}
+	if err := deleteParked("my-work"); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"my-work.md", "my-work.session"} {
+		if _, err := os.Stat(filepath.Join(e.root, "proj", f)); err == nil {
+			t.Errorf("%s still exists", f)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(e.repo, "dirty.txt")); err != nil {
+		t.Errorf("project file touched: %v", err)
+	}
+	if err := deleteParked("../x"); err == nil {
+		t.Error("path trick accepted")
+	}
+}
