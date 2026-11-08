@@ -26,7 +26,7 @@ subscription, the same as if you'd typed `claude` in a terminal.
   `claude attach <id>`. Unlike Delete, this leaves the worktree in place.
 - **Park** — stop a session and save its conversation and git state to
   disk, so it leaves `claude agents` and the Remote Control app until you
-  resume it. Parked work shows in its own list with a Resume button.
+  resume it. Parked work shows in its own list with Resume and Delete buttons. The Disconnected and Parked lists show 10 at a time ("Show more" adds 10), sort newest first with a relative start or park time, and take a fuzzy filter above the list once they pass 10 entries.
   Parking uses the same files as the `rc-mgmt` skill in claude-skills
   (`~/.claude/handoffs`), so work parked by either tool is listed and resumed
   by both. Uncommitted files stay in the folder.
@@ -109,6 +109,7 @@ claudio -addr 100.64.0.1:8787 -host-name nix -peers mac=http://100.64.0.2:8787
 | `POST` | `/api/sessions/bulk` | `{"action":"remove"\|"resume","ids":[…]}` (max 50); returns one result per id, so a refused delete does not hide the others |
 | `POST` | `/api/sessions/{id}/park` | Stop a session and save a snapshot plus handoff file; it then leaves the session list |
 | `GET` | `/api/parked` | List parked work on this host and every peer |
+| `DELETE` | `/api/parked/{slug}` | Remove the handoff and its saved conversation (exact slug only; the project folder is untouched) |
 | `POST` | `/api/parked/{slug}/resume` | Respawn the stopped session, or fork the saved conversation into a new one in the same folder |
 | `GET` | `/api/folders` | List immediate subdirectories of the configured roots |
 

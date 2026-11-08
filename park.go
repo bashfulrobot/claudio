@@ -523,3 +523,20 @@ func resumeParked(claudeBin, gitBin string, roots []string, slug string) error {
 	}
 	return markResumed(h, "fork", branch)
 }
+
+// deleteParked removes a handoff file and its snapshot directory. It takes an
+// exact slug only: a prefix match could delete work the user did not name.
+// Files in the project folder are never touched.
+func deleteParked(slug string) error {
+	h, err := findHandoff(slug)
+	if err != nil {
+		return err
+	}
+	if filepath.Base(h.file) != slug+".md" {
+		return fmt.Errorf("no parked work named %q (closest: %s)", slug, h.get("slug"))
+	}
+	if err := os.RemoveAll(strings.TrimSuffix(h.file, ".md") + ".session"); err != nil {
+		return err
+	}
+	return os.Remove(h.file)
+}

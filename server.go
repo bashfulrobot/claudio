@@ -102,6 +102,15 @@ func (s *Server) handleParked(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleParkedBySlug(w http.ResponseWriter, r *http.Request) {
 	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/parked/"), "/")
 	parts := strings.Split(rest, "/")
+	// DELETE /api/parked/{slug} -> drop the handoff and its snapshot
+	if len(parts) == 1 && r.Method == http.MethodDelete {
+		if err := deleteParked(parts[0]); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+		return
+	}
 	if len(parts) != 2 || parts[1] != "resume" {
 		writeError(w, http.StatusNotFound, "not found")
 		return
