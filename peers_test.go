@@ -138,6 +138,35 @@ func TestHostParamLocalNameRunsLocally(t *testing.T) {
 	}
 }
 
+func TestCrossOriginWritesAreRejected(t *testing.T) {
+	peer, last, _ := fakePeer(t, `[]`)
+	srv := newMultiServer(t, []Peer{{Name: "mac", URL: peer.URL}})
+
+	for _, target := range []string{"/api/sessions?host=mac", "/api/sessions/run1/stop"} {
+		req := httptest.NewRequest(http.MethodPost, target, strings.NewReader(`{"cwd":"/x"}`))
+		req.Host = "claudio.example.ts.net"
+		req.Header.Set("Origin", "https://evil.example")
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("%s: status = %d, want 403", target, rec.Code)
+		}
+	}
+	if last.Method != "" {
+		t.Errorf("peer was contacted: %s %s", last.Method, last.URL)
+	}
+
+	// Same-origin writes and origin-less clients (curl, a peer) still work.
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/run1/stop", nil)
+	req.Host = "claudio.example.ts.net"
+	req.Header.Set("Origin", "https://claudio.example.ts.net")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("same-origin write: status = %d: %s", rec.Code, rec.Body)
+	}
+}
+
 func TestHostsEndpoint(t *testing.T) {
 	up, _, _ := fakePeer(t, `[]`)
 	down, _, _ := fakePeer(t, `[]`)

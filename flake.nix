@@ -103,6 +103,25 @@
               description = "Project root directories to offer in the folder picker.";
             };
 
+            hostName = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = "Label for this host in the session list. Null uses the short hostname.";
+            };
+
+            peers = lib.mkOption {
+              type = lib.types.attrsOf lib.types.str;
+              default = { };
+              example = {
+                mac = "https://mac.example.ts.net/claudio";
+              };
+              description = ''
+                Other claudio instances to merge into this one's session list,
+                as name to base URL. Reach them over the tailnet; there is no
+                auth between instances, so restrict access with Tailscale ACLs.
+              '';
+            };
+
             claudeBinary = lib.mkOption {
               type = lib.types.str;
               default = "claude";
@@ -137,7 +156,14 @@
                   + " -addr ${cfg.listenAddr}"
                   + " -claude-bin ${cfg.claudeBinary}"
                   + " -git-bin ${cfg.gitBinary}"
-                  + lib.optionalString (cfg.roots != [ ]) " -roots ${lib.concatStringsSep "," cfg.roots}";
+                  + lib.optionalString (cfg.roots != [ ]) " -roots ${lib.concatStringsSep "," cfg.roots}"
+                  + lib.optionalString (cfg.hostName != null) " -host-name ${lib.escapeShellArg cfg.hostName}"
+                  + lib.optionalString (cfg.peers != { }) (
+                    " -peers "
+                    + lib.escapeShellArg (
+                      lib.concatStringsSep "," (lib.mapAttrsToList (name: url: "${name}=${url}") cfg.peers)
+                    )
+                  );
                 User = cfg.user;
                 Restart = "on-failure";
                 RestartSec = 5;

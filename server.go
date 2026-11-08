@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -34,10 +35,34 @@ func NewServer(claudeBin, gitBin string, roots []string, hostName string, peers 
 // ServeHTTP sends any /api request carrying ?host=<peer> to that peer before
 // the mux sees it, so every per-session route works remotely unchanged.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if strings.HasPrefix(r.URL.Path, "/api/") && s.forwardToPeer(w, r) {
-		return
+	if strings.HasPrefix(r.URL.Path, "/api/") {
+		if !originAllowed(r) {
+			writeError(w, http.StatusForbidden, "cross-origin request refused")
+			return
+		}
+		if s.forwardToPeer(w, r) {
+			return
+		}
 	}
 	s.mux.ServeHTTP(w, r)
+}
+
+// originAllowed refuses a state-changing request that a browser tagged with
+// another site's Origin. Without it any web page the phone visits could POST
+// to claudio (the JSON decoder ignores Content-Type, so a "simple" cross-site
+// request is enough) and spawn or delete sessions. Requests with no Origin,
+// such as curl or a peer claudio, pass: only a browser sets one. The peer hop
+// drops Origin after this check ran here, see forwardToPeer.
+func originAllowed(r *http.Request) bool {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		return true
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	return err == nil && u.Host == r.Host
 }
 
 func (s *Server) routes() {
