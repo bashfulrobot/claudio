@@ -118,7 +118,7 @@ func TestTrustKeyUsesMainCheckoutForWorktree(t *testing.T) {
 		}
 	}
 	run(repo, "init", "-q")
-	run(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init")
+	run(repo, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "init")
 	wt := filepath.Join(t.TempDir(), "wt")
 	run(repo, "worktree", "add", "-q", "-b", "b", wt)
 

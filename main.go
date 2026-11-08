@@ -14,22 +14,37 @@ func main() {
 	claudeBin := flag.String("claude-bin", "claude", "path to the claude CLI binary")
 	gitBin := flag.String("git-bin", "git", "path to the git binary, used to decide whether a new session can be worktree-isolated")
 	rootsFlag := flag.String("roots", defaultRoots(), "comma-separated project root directories to offer in the folder picker")
+	hostFlag := flag.String("host-name", defaultHostName(), "label for this host in the session list")
+	peersFlag := flag.String("peers", "", "other claudio instances as name=http://tailscale-ip:8787, comma-separated")
 	flag.Parse()
 
+	peers, err := parsePeers(*peersFlag)
+	if err != nil {
+		log.Fatalf("-peers: %v", err)
+	}
+
 	var roots []string
-	for _, r := range strings.Split(*rootsFlag, ",") {
+	for r := range strings.SplitSeq(*rootsFlag, ",") {
 		r = strings.TrimSpace(r)
 		if r != "" {
 			roots = append(roots, r)
 		}
 	}
 
-	srv := NewServer(*claudeBin, *gitBin, roots)
+	srv := NewServer(*claudeBin, *gitBin, roots, *hostFlag, peers)
 
-	log.Printf("claudio listening on %s (roots: %v)", *addr, roots)
+	log.Printf("claudio %q listening on %s (roots: %v, peers: %v)", *hostFlag, *addr, roots, peers)
 	if err := http.ListenAndServe(*addr, srv); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func defaultHostName() string {
+	h, err := os.Hostname()
+	if err != nil || h == "" {
+		return "local"
+	}
+	return strings.SplitN(h, ".", 2)[0]
 }
 
 func defaultRoots() string {
