@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -78,6 +79,10 @@ type Session struct {
 	// stopped, finished, or orphaned by a supervisor restart. The
 	// conversation is still on disk, so it can be resumed or deleted.
 	Disconnected bool `json:"disconnected"`
+
+	// URL opens the live session in claude.ai/code (the iOS app claims the
+	// same link). Empty when the session has no Remote Control bridge.
+	URL string `json:"url,omitempty"`
 
 	// Host names the claudio instance the session runs on. Set by the server,
 	// never by `claude agents`.
@@ -207,6 +212,9 @@ func listSessions(claudeBin string) ([]Session, error) {
 
 	for i := range sessions {
 		sessions[i].Disconnected = sessions[i].PID == 0
+		if !sessions[i].Disconnected {
+			sessions[i].URL = bridgeURL(claudeConfigDir(), sessions[i].PID, sessions[i].SessionID)
+		}
 		if repo, wt, ok := splitWorktreeCwd(sessions[i].Cwd); ok {
 			sessions[i].Repo = repo
 			sessions[i].Worktree = wt
@@ -214,6 +222,31 @@ func listSessions(claudeBin string) ([]Session, error) {
 	}
 
 	return sessions, nil
+}
+
+// bridgeURL builds the claude.ai/code link for a running session. Claude Code
+// records the Remote Control id as bridgeSessionId in <config>/sessions/<pid>.json.
+// The file is keyed by pid, so the sessionId must match: a reused pid then
+// yields no link instead of another session's.
+func bridgeURL(configDir string, pid int, sessionID string) string {
+	if configDir == "" || pid <= 0 {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(configDir, "sessions", strconv.Itoa(pid)+".json"))
+	if err != nil {
+		return ""
+	}
+	var f struct {
+		BridgeSessionID string `json:"bridgeSessionId"`
+		SessionID       string `json:"sessionId"`
+	}
+	if json.Unmarshal(data, &f) != nil || f.SessionID != sessionID {
+		return ""
+	}
+	if !strings.HasPrefix(f.BridgeSessionID, "session_") || strings.ContainsAny(f.BridgeSessionID, "/?#. ") {
+		return ""
+	}
+	return "https://claude.ai/code/" + f.BridgeSessionID
 }
 
 // spawnSession launches a new detached, backgrounded Claude Code session in

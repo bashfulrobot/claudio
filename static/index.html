@@ -309,6 +309,17 @@
     font-weight: 600;
   }
   .stop-btn:active { opacity: 0.7; }
+  .expand-row { gap: 8px; }
+  .open-link {
+    background: var(--accent);
+    color: #fff;
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 15px;
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .open-link:active { opacity: 0.7; }
   .output-panel {
     margin-top: 12px;
     padding-top: 12px;
@@ -1161,6 +1172,16 @@ function buildCard(s) {
         e.stopPropagation();
         onStop(stopBtn, s.id, displayName);
       });
+      // A plain https link: desktop opens claude.ai/code in the browser, and
+      // iOS hands it to the Claude app when the app claims that path.
+      if (s.url) {
+        const open = el('a', 'open-link', 'Open');
+        open.href = s.url;
+        open.target = '_blank';
+        open.rel = 'noopener noreferrer';
+        open.addEventListener('click', (e) => e.stopPropagation());
+        expandRow.appendChild(open);
+      }
       expandRow.appendChild(stopBtn);
       card.appendChild(expandRow);
     }
