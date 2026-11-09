@@ -454,6 +454,49 @@ func resumeSession(claudeBin string, id string) error {
 	return nil
 }
 
+// connectSession attaches Remote Control to a running session that has none.
+// Claude Code cannot enable it from outside a live process, so this stops the
+// session and starts its saved conversation again with --remote-control. The
+// new session gets a new id and a Remote Control link, and the stopped
+// original stays listed as disconnected. A turn in progress is cut off.
+// If the relaunch fails, the original is respawned so the session is not lost.
+func connectSession(claudeBin, gitBin, id string) error {
+	s, err := findSession(claudeBin, id)
+	if err != nil {
+		return err
+	}
+	if s.Disconnected {
+		return fmt.Errorf("session %q is not running; Resume it instead", id)
+	}
+	if s.URL != "" {
+		return fmt.Errorf("session %q already has Remote Control", id)
+	}
+	if s.SessionID == "" {
+		return fmt.Errorf("session %q has no saved conversation to reopen", id)
+	}
+	if fi, err := os.Stat(s.Cwd); err != nil || !fi.IsDir() {
+		return fmt.Errorf("folder is gone: %s", s.Cwd)
+	}
+	if err := ensureTrusted(gitBin, s.Cwd); err != nil {
+		return fmt.Errorf("could not trust folder: %w", err)
+	}
+	name := s.Name
+	if name == "" {
+		name = s.ID
+	}
+	if err := stopSession(claudeBin, id); err != nil {
+		return err
+	}
+	args := []string{"--bg", "--name", name, "--remote-control", name, "--resume", s.SessionID}
+	if err := launchBackground(claudeBin, s.Cwd, name, args); err != nil {
+		if rerr := resumeSession(claudeBin, id); rerr != nil {
+			return fmt.Errorf("%w (and the original could not be restarted: %v)", err, rerr)
+		}
+		return fmt.Errorf("%w (the original was restarted without Remote Control)", err)
+	}
+	return nil
+}
+
 // maxBulkIDs bounds one bulk request: each id costs a `claude` subprocess.
 const maxBulkIDs = 50
 

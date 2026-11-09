@@ -1209,6 +1209,17 @@ function buildCard(s) {
         open.addEventListener('click', (e) => e.stopPropagation());
         expandRow.appendChild(open);
       }
+      // No bridge id means Remote Control is not attached, so the phone app
+      // cannot see this session. Connecting restarts it with Remote Control on.
+      if (!s.url) {
+        const connectBtn = el('button', 'stop-btn', 'Connect remote');
+        connectBtn.type = 'button';
+        connectBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          onConnect(connectBtn, s.id, displayName);
+        });
+        expandRow.appendChild(connectBtn);
+      }
       expandRow.appendChild(stopBtn);
       card.appendChild(expandRow);
     }
@@ -1404,6 +1415,25 @@ async function onKill(btn, id, name) {
     outputCache.delete(id);
     toast(`Deleted ${name}`);
     refreshSessions();
+  } catch (err) {
+    toast(err.message);
+    btn.disabled = false;
+  }
+}
+
+// Restarts the session with Remote Control on. It comes back under a new id,
+// and the stopped original stays in the Disconnected list.
+async function onConnect(btn, id, name) {
+  if (!confirm(`Restart "${name}" with Remote Control? A turn in progress is cut off, and the session comes back under a new id.`)) return;
+  btn.disabled = true;
+  try {
+    const res = await fetch(`${API_BASE}/api/sessions/${id}/connect${hostQ(hostOfId(id))}`, { method: 'POST' });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || 'failed to connect');
+    expandedIds.delete(id);
+    outputCache.delete(id);
+    toast(`Reconnected ${name}`);
+    setTimeout(refreshSessions, 1500);
   } catch (err) {
     toast(err.message);
     btn.disabled = false;
