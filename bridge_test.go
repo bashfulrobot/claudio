@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -47,5 +48,39 @@ func TestBridgeURL(t *testing.T) {
 	}
 	if got := bridgeURL("", 100, "uuid-1"); got != "" {
 		t.Errorf("empty config dir: %q", got)
+	}
+}
+
+func TestConnectRestartsSessionWithRemoteControl(t *testing.T) {
+	e := newParkEnv(t, true) // run1, pid 42, no bridge file
+	if err := connectSession(e.bin, "git", "run1"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(e.log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	want := []string{"stop run1", "--bg --name my work --remote-control my work --resume uuid-1"}
+	if len(lines) != len(want) || lines[0] != want[0] || lines[1] != want[1] {
+		t.Fatalf("claude calls = %q, want %q", lines, want)
+	}
+}
+
+func TestConnectRefusesSessionThatAlreadyHasRemoteControl(t *testing.T) {
+	e := newParkEnv(t, true)
+	writeSessionFile(t, filepath.Join(e.home, ".claude"), "42.json", `{"sessionId":"uuid-1","bridgeSessionId":"session_abc"}`)
+	if err := connectSession(e.bin, "git", "run1"); err == nil {
+		t.Fatal("connected a session that already has a bridge")
+	}
+	if raw, _ := os.ReadFile(e.log); len(raw) != 0 {
+		t.Errorf("claude was called: %s", raw)
+	}
+}
+
+func TestConnectRefusesStoppedSession(t *testing.T) {
+	e := newParkEnv(t, false)
+	if err := connectSession(e.bin, "git", "run1"); err == nil {
+		t.Fatal("connected a session that is not running")
 	}
 }
