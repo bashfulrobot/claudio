@@ -194,6 +194,23 @@
     padding: 0 8px;
   }
   .link-btn:active { opacity: 0.7; }
+  .sec-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 44px;
+    padding: 0;
+    background: none;
+    border: none;
+    color: inherit;
+    font: inherit;
+    text-transform: inherit;
+    letter-spacing: inherit;
+  }
+  .sec-toggle:active { opacity: 0.7; }
+  .chev { display: inline-block; width: 1em; transition: transform 0.15s; }
+  .sec-toggle[aria-expanded="false"] .chev { transform: rotate(-90deg); }
+  .sec-body[hidden] { display: none; }
   .list-filter { margin-bottom: 8px; }
   .more-btn { width: 100%; margin-top: 8px; }
   .more-btn[hidden] { display: none; }
@@ -502,28 +519,36 @@
   </div>
 </header>
 <main>
-  <section>
-    <h2>Running</h2>
-    <div id="sessions" class="card-list">
-      <div class="empty">Loading…</div>
+  <section id="running-section" data-sec="running">
+    <div class="section-head">
+      <h2><button class="sec-toggle" type="button" aria-expanded="true" aria-controls="running-body"><span class="chev" aria-hidden="true">▾</span>Running <span id="running-count"></span></button></h2>
+    </div>
+    <div id="running-body" class="sec-body">
+      <div id="sessions" class="card-list">
+        <div class="empty">Loading…</div>
+      </div>
     </div>
   </section>
-  <section id="disconnected-section" hidden>
+  <section id="disconnected-section" data-sec="disconnected" hidden>
     <div class="section-head">
-      <h2>Disconnected <span id="disc-count"></span></h2>
+      <h2><button class="sec-toggle" type="button" aria-expanded="true" aria-controls="disconnected-body"><span class="chev" aria-hidden="true">▾</span>Disconnected <span id="disc-count"></span></button></h2>
       <button id="select-btn" class="link-btn" type="button">Select</button>
     </div>
-    <input id="disc-filter" class="list-filter" type="text" placeholder="Filter by name, folder or host" aria-label="Filter disconnected sessions" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off">
-    <div id="disconnected" class="card-list"></div>
-    <button id="disc-more" class="link-btn more-btn" type="button" hidden></button>
-  </section>
-  <section id="parked-section" hidden>
-    <div class="section-head">
-      <h2>Parked <span id="parked-count"></span></h2>
+    <div id="disconnected-body" class="sec-body">
+      <input id="disc-filter" class="list-filter" type="text" placeholder="Filter by name, folder or host" aria-label="Filter disconnected sessions" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off">
+      <div id="disconnected" class="card-list"></div>
+      <button id="disc-more" class="link-btn more-btn" type="button" hidden></button>
     </div>
-    <input id="parked-filter" class="list-filter" type="text" placeholder="Filter by name, repo or host" aria-label="Filter parked work" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off">
-    <div id="parked" class="card-list"></div>
-    <button id="parked-more" class="link-btn more-btn" type="button" hidden></button>
+  </section>
+  <section id="parked-section" data-sec="parked" hidden>
+    <div class="section-head">
+      <h2><button class="sec-toggle" type="button" aria-expanded="true" aria-controls="parked-body"><span class="chev" aria-hidden="true">▾</span>Parked <span id="parked-count"></span></button></h2>
+    </div>
+    <div id="parked-body" class="sec-body">
+      <input id="parked-filter" class="list-filter" type="text" placeholder="Filter by name, repo or host" aria-label="Filter parked work" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off">
+      <div id="parked" class="card-list"></div>
+      <button id="parked-more" class="link-btn more-btn" type="button" hidden></button>
+    </div>
   </section>
 </main>
 <div id="bulk-bar" class="bulk-bar" role="toolbar" aria-label="Bulk actions">
@@ -610,6 +635,7 @@ const sessionsEl = document.getElementById('sessions');
 const disconnectedEl = document.getElementById('disconnected');
 const disconnectedSectionEl = document.getElementById('disconnected-section');
 const discCountEl = document.getElementById('disc-count');
+const runningCountEl = document.getElementById('running-count');
 const selectBtnEl = document.getElementById('select-btn');
 const parkedEl = document.getElementById('parked');
 const parkedSectionEl = document.getElementById('parked-section');
@@ -1055,6 +1081,7 @@ function renderSessions(sessions) {
   for (const id of [...selectedIds]) if (!liveIds.has(id)) selectedIds.delete(id);
   if (!disconnected.length) selectMode = false;
 
+  runningCountEl.textContent = running.length ? '(' + running.length + ')' : '';
   sessionsEl.textContent = '';
   if (!running.length) {
     sessionsEl.appendChild(el('div', 'empty', 'No sessions running'));
@@ -1632,6 +1659,37 @@ document.addEventListener('keydown', (e) => {
   if (favDropdownEl.classList.contains('show')) closeFavDropdown();
   else if (modalBackdropEl.classList.contains('show')) closeModal();
 });
+
+// Each section folds to its header (the count stays visible). The choice is a
+// per-device convenience, so it lives in localStorage and the page works
+// without it.
+const COLLAPSED_KEY = 'claudio.collapsed';
+function loadCollapsed() {
+  try { return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) || '[]')); } catch (e) { return new Set(); }
+}
+function saveCollapsed(set) {
+  try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...set])); } catch (e) { /* storage blocked: stay per-visit */ }
+}
+function setupCollapse() {
+  const collapsed = loadCollapsed();
+  for (const sec of document.querySelectorAll('section[data-sec]')) {
+    const name = sec.dataset.sec;
+    const btn = sec.querySelector('.sec-toggle');
+    const body = sec.querySelector('.sec-body');
+    const apply = (isCollapsed) => {
+      body.hidden = isCollapsed;
+      btn.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+    };
+    apply(collapsed.has(name));
+    btn.addEventListener('click', () => {
+      const now = !body.hidden;
+      apply(now);
+      if (now) collapsed.add(name); else collapsed.delete(name);
+      saveCollapsed(collapsed);
+    });
+  }
+}
+setupCollapse();
 
 favorites = loadFavorites();
 loadHosts().then(() => { loadFolders(); refreshSessions(); refreshParked(); });
