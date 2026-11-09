@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -454,13 +455,15 @@ func resumeSession(claudeBin string, id string) error {
 	return nil
 }
 
+var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$`)
+
 // connectSession attaches Remote Control to a running session that has none.
 // Claude Code cannot enable it from outside a live process, so this stops the
 // session and starts its saved conversation again with --remote-control. The
 // new session gets a new id and a Remote Control link, and the stopped
 // original stays listed as disconnected. A turn in progress is cut off.
 // If the relaunch fails, the original is respawned so the session is not lost.
-func connectSession(claudeBin, gitBin, id string) error {
+func connectSession(claudeBin, gitBin string, roots []string, id string) error {
 	s, err := findSession(claudeBin, id)
 	if err != nil {
 		return err
@@ -471,18 +474,24 @@ func connectSession(claudeBin, gitBin, id string) error {
 	if s.URL != "" {
 		return fmt.Errorf("session %q already has Remote Control", id)
 	}
-	if s.SessionID == "" {
+	// The uuid ends the argv, so it must look like one and never like a flag.
+	if !uuidRe.MatchString(s.SessionID) {
 		return fmt.Errorf("session %q has no saved conversation to reopen", id)
 	}
 	if fi, err := os.Stat(s.Cwd); err != nil || !fi.IsDir() {
 		return fmt.Errorf("folder is gone: %s", s.Cwd)
 	}
+	// Same confinement as spawn and park resume: trust and launch only inside
+	// the configured roots.
+	if !underRoots(s.Cwd, roots) {
+		return fmt.Errorf("folder is not under a configured root: %s", s.Cwd)
+	}
 	if err := ensureTrusted(gitBin, s.Cwd); err != nil {
 		return fmt.Errorf("could not trust folder: %w", err)
 	}
 	name := s.Name
-	if name == "" {
-		name = s.ID
+	if name == "" || strings.HasPrefix(name, "-") {
+		name = s.ID // a name starting with "-" could be read as a flag
 	}
 	if err := stopSession(claudeBin, id); err != nil {
 		return err

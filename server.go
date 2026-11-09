@@ -287,7 +287,7 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
-		if err := connectSession(s.claudeBin, s.gitBin, parts[0]); err != nil {
+		if err := connectSession(s.claudeBin, s.gitBin, s.roots, parts[0]); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}

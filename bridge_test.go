@@ -51,36 +51,95 @@ func TestBridgeURL(t *testing.T) {
 	}
 }
 
-func TestConnectRestartsSessionWithRemoteControl(t *testing.T) {
-	e := newParkEnv(t, true) // run1, pid 42, no bridge file
-	if err := connectSession(e.bin, "git", "run1"); err != nil {
+const connUUID = "6bc80ce3-09d9-4481-99ad-adaa3328b667"
+
+// connectEnv stubs claude with one session (id run1, pid 42 unless stopped)
+// in a real folder under a temp HOME, and returns the stub, its call log, the
+// folder and the HOME.
+func connectEnv(t *testing.T, running bool, name, sessionID string) (bin, log, repo, home string) {
+	t.Helper()
+	home = t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(home, "gitconfig"))
+	repo = filepath.Join(home, "git", "proj")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile(e.log)
+	pid := "null"
+	if running {
+		pid = "42"
+	}
+	dir := t.TempDir()
+	log = filepath.Join(dir, "calls.log")
+	bin = filepath.Join(dir, "claude")
+	script := `#!/bin/sh
+if [ "$1" = agents ]; then
+  cat <<'JSON'
+[{"id":"run1","name":"` + name + `","state":"working","status":"idle","pid":` + pid + `,"cwd":"` + repo + `","sessionId":"` + sessionID + `"}]
+JSON
+  exit 0
+fi
+echo "$*" >> ` + log + `
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return bin, log, repo, home
+}
+
+func TestConnectRestartsSessionWithRemoteControl(t *testing.T) {
+	bin, log, repo, _ := connectEnv(t, true, "my work", connUUID)
+	if err := connectSession(bin, "git", []string{filepath.Dir(repo)}, "run1"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(log)
 	if err != nil {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
-	want := []string{"stop run1", "--bg --name my work --remote-control my work --resume uuid-1"}
+	want := []string{"stop run1", "--bg --name my work --remote-control my work --resume " + connUUID}
 	if len(lines) != len(want) || lines[0] != want[0] || lines[1] != want[1] {
 		t.Fatalf("claude calls = %q, want %q", lines, want)
 	}
 }
 
-func TestConnectRefusesSessionThatAlreadyHasRemoteControl(t *testing.T) {
-	e := newParkEnv(t, true)
-	writeSessionFile(t, filepath.Join(e.home, ".claude"), "42.json", `{"sessionId":"uuid-1","bridgeSessionId":"session_abc"}`)
-	if err := connectSession(e.bin, "git", "run1"); err == nil {
-		t.Fatal("connected a session that already has a bridge")
+func TestConnectRefusalsCallNothing(t *testing.T) {
+	cases := []struct {
+		name    string
+		running bool
+		sid     string
+		roots   func(repo string) []string
+		bridge  bool
+	}{
+		{"not running", false, connUUID, func(r string) []string { return []string{filepath.Dir(r)} }, false},
+		{"already has a bridge", true, connUUID, func(r string) []string { return []string{filepath.Dir(r)} }, true},
+		{"session id is a flag", true, "--dangerously-skip-permissions", func(r string) []string { return []string{filepath.Dir(r)} }, false},
+		{"folder outside roots", true, connUUID, func(r string) []string { return []string{"/nonexistent-root"} }, false},
 	}
-	if raw, _ := os.ReadFile(e.log); len(raw) != 0 {
-		t.Errorf("claude was called: %s", raw)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			bin, log, repo, home := connectEnv(t, c.running, "my work", c.sid)
+			if c.bridge {
+				writeSessionFile(t, filepath.Join(home, ".claude"), "42.json", `{"sessionId":"`+c.sid+`","bridgeSessionId":"session_abc"}`)
+			}
+			if err := connectSession(bin, "git", c.roots(repo), "run1"); err == nil {
+				t.Fatal("connect succeeded, want refusal")
+			}
+			if raw, _ := os.ReadFile(log); len(raw) != 0 {
+				t.Errorf("claude was called: %s", raw)
+			}
+		})
 	}
 }
 
-func TestConnectRefusesStoppedSession(t *testing.T) {
-	e := newParkEnv(t, false)
-	if err := connectSession(e.bin, "git", "run1"); err == nil {
-		t.Fatal("connected a session that is not running")
+func TestConnectRenamesSessionWhoseNameLooksLikeAFlag(t *testing.T) {
+	bin, log, repo, _ := connectEnv(t, true, "--model", connUUID)
+	if err := connectSession(bin, "git", []string{filepath.Dir(repo)}, "run1"); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(log)
+	if !strings.Contains(string(raw), "--bg --name run1 --remote-control run1 --resume "+connUUID) {
+		t.Fatalf("calls = %q, want the id used as the name", raw)
 	}
 }
