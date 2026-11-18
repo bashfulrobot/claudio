@@ -107,6 +107,7 @@ claudio -addr 100.64.0.1:8787 -host-name nix -peers mac=http://100.64.0.2:8787
 | `POST` | `/api/sessions/{id}/resume` | Restart a disconnected session under the same id (`claude respawn <id>`) |
 | `DELETE` | `/api/sessions/{id}` | Permanently delete a session and its worktree (`claude rm <id>`) |
 | `POST` | `/api/sessions/bulk` | `{"action":"remove"\|"resume","ids":[…]}` (max 50); returns one result per id, so a refused delete does not hide the others |
+| `POST` | `/api/sessions/{id}/connect` | Attach Remote Control to a running session that has none: stops it and reopens its conversation with `--remote-control`, under a new id. Cuts off a turn in progress |
 | `POST` | `/api/sessions/{id}/park` | Stop a session and save a snapshot plus handoff file; it then leaves the session list |
 | `GET` | `/api/parked` | List parked work on this host and every peer |
 | `DELETE` | `/api/parked/{slug}` | Remove the handoff and its saved conversation (exact slug only; the project folder is untouched) |
